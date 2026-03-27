@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="primary">#2E7D32</color>
+    <color name="primary_dark">#1B5E20</color>
+    <color name="primary_light">#4CAF50</color>
+    <color name="accent">#FF6F00</color>
+    <color name="white">#FFFFFF</color>
+    <color name="black">#000000</color>
+    <color name="background">#F5F5F5</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="board_background">#DEB887</color>
+    <color name="board_line">#5D4037</color>
+    <color name="stone_black">#1A1A1A</color>
+    <color name="stone_white">#FAFAFA</color>
+    <color name="stone_shadow">#9E9E9E</color>
+    <color name="text_primary">#212121</color>
+    <color name="text_secondary">#757575</color>
+    <color name="divider">#E0E0E0</color>
+    <color name="last_move">#E53935</color>
+    <color name="highlight">#FFD54F</color>
+</resources>

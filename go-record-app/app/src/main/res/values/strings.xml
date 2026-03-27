@@ -1,0 +1,32 @@
+<resources>
+    <string name="app_name">围棋打谱</string>
+    <string name="action_new">新游戏</string>
+    <string name="action_load">加载</string>
+    <string name="action_save">保存</string>
+    <string name="action_settings">设置</string>
+    <string name="action_to_start">到起始</string>
+    <string name="action_previous">上一步</string>
+    <string name="action_next">下一步</string>
+    <string name="action_pass">虚手</string>
+    <string name="action_comment">注释</string>
+    <string name="action_mark">标记</string>
+    <string name="action_undo">悔棋</string>
+    <string name="action_redo">重做</string>
+    <string name="action_delete_branch">删除分支</string>
+    <string name="black_player">黑方</string>
+    <string name="white_player">白方</string>
+    <string name="result">结果</string>
+    <string name="date">日期</string>
+    <string name="handicap">让子</string>
+    <string name="valid_move">落子成功</string>
+    <string name="invalid_move">落子无效</string>
+    <string name="ko_rule">打劫规则</string>
+    <string name="suicide_move">自杀行为</string>
+    <string name="branch_created">分支已创建</string>
+    <string name="load_failed">加载失败</string>
+    <string name="save_failed">保存失败</string>
+    <string name="save_success">保存成功</string>
+    <string name="load_success">加载成功</string>
+    <string name="current_player">当前玩家</string>
+    <string name="game_in_progress">游戏进行中</string>
+</resources>
