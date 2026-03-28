@@ -29,6 +29,9 @@ public class GoBoard {
     private List<Position> crossMarks; // 叉号标记
     private List<Position> squareMarks; // 方块标记
     private List<Position> triangleMarks; // 三角形标记
+    
+    // 错误消息
+    private String lastErrorMessage;
 
     // SGF 节点数据结构（游戏树）
     public static class SGFNode {
@@ -79,6 +82,7 @@ public class GoBoard {
         triangleMarks = new ArrayList<>();
         gameTreeRoot = null;
         currentNode = null;
+        lastErrorMessage = "";
     }
     
     // ==================== 游戏树操作 ====================
@@ -138,7 +142,7 @@ public class GoBoard {
     /**
      * 从游戏树重建盘面状态（从根节点到当前节点）
      */
-    private void rebuildBoardFromTree() {
+    void rebuildBoardFromTree() {
         System.out.println("rebuildBoardFromTree 开始");
 
         // 清空棋盘
@@ -157,18 +161,54 @@ public class GoBoard {
 
         System.out.println("从根节点到当前节点的路径长度: " + path.size());
 
-        // 应用走子
+        // 应用走子（使用placeStoneForReconstruction以确保提子逻辑正确执行）
         moveHistory.clear();
+        // 保存当前玩家状态
+        int savedCurrentPlayer = currentPlayer;
+        
+        // 重置棋盘后，黑棋先行（除非有让子）
+        currentPlayer = BLACK;
+        if (handicap > 0) {
+            currentPlayer = WHITE; // 让子后白棋先行
+        }
+        
+        // 临时禁用错误消息
+        String savedErrorMessage = lastErrorMessage;
+        lastErrorMessage = "";
+        
+        // 清除打劫状态，因为重建棋盘时需要重新计算
+        koMove = null;
+        
         for (SGFNode pathNode : path) {
             if (pathNode.move != null) {
                 if (pathNode.move.x != -1 && pathNode.move.y != -1) {
-                    board[pathNode.move.y][pathNode.move.x] = pathNode.move.player;
-                    moveHistory.add(pathNode.move);
-                    System.out.println("应用走子: " + pathNode.move.x + "," + pathNode.move.y + " " +
-                        (pathNode.move.player == BLACK ? "黑" : "白"));
+                    // 设置当前玩家为棋谱中记录的玩家
+                    currentPlayer = pathNode.move.player;
+                    
+                    // 使用placeStoneForReconstruction应用走子，确保提子逻辑正确执行
+                    boolean success = placeStoneForReconstruction(pathNode.move.x, pathNode.move.y);
+                    
+                    if (success) {
+                        System.out.println("应用走子: " + pathNode.move.x + "," + pathNode.move.y + " " +
+                            (pathNode.move.player == BLACK ? "黑" : "白"));
+                    } else {
+                        System.out.println("警告: 应用走子失败: " + pathNode.move.x + "," + pathNode.move.y + " " +
+                            (pathNode.move.player == BLACK ? "黑" : "白") + 
+                            " 错误: " + lastErrorMessage);
+                        // 如果placeStoneForReconstruction失败，直接设置棋盘（回退到旧逻辑）
+                        board[pathNode.move.y][pathNode.move.x] = pathNode.move.player;
+                        moveHistory.add(pathNode.move);
+                        // 切换玩家
+                        switchPlayer();
+                    }
                 }
             }
         }
+        
+        // 恢复当前玩家状态
+        currentPlayer = savedCurrentPlayer;
+        // 恢复错误消息
+        lastErrorMessage = savedErrorMessage;
 
         currentMoveIndex = moveHistory.size() - 1;
         lastMove = moveHistory.isEmpty() ? null : moveHistory.get(currentMoveIndex);
@@ -386,18 +426,21 @@ public class GoBoard {
 
         // 边界检查
         if (x < 0 || x >= BOARD_SIZE || y < 0 || y >= BOARD_SIZE) {
+            lastErrorMessage = "位置超出棋盘范围";
             System.out.println("边界检查失败");
             return false;
         }
 
         // 检查是否是打劫
         if (koMove != null && koMove.x == x && koMove.y == y) {
+            lastErrorMessage = "此处为打劫，不能立即回提";
             System.out.println("打劫检查失败");
             return false;
         }
 
         // 检查是否有棋子
         if (board[y][x] != EMPTY) {
+            lastErrorMessage = "此处已有棋子";
             System.out.println("位置已有棋子");
             return false;
         }
@@ -406,37 +449,36 @@ public class GoBoard {
         int[][] tempBoard = copyBoard(board);
         tempBoard[y][x] = currentPlayer;
 
-        // 检查是否自杀
+        // 先提掉被包围的对手棋子
+        List<Position> capturedStones = captureStones(tempBoard, x, y);
+        
+        // 检查是否自杀（提子后）
         if (hasLiberty(tempBoard, x, y, currentPlayer)) {
-            // 提子
-            List<Position> capturedStones = captureStones(tempBoard, x, y);
+            // 执行落子
+            board = tempBoard;
+            Move move = new Move(x, y, currentPlayer, capturedStones);
+            moveHistory.add(move);
+            lastMove = move;
+            currentMoveIndex = moveHistory.size() - 1;
 
-            // 再次检查是否自杀（提子后）
-            if (hasLiberty(tempBoard, x, y, currentPlayer)) {
-                // 执行落子
-                board = tempBoard;
-                Move move = new Move(x, y, currentPlayer, capturedStones);
-                moveHistory.add(move);
-                lastMove = move;
-                currentMoveIndex = moveHistory.size() - 1;
-
-                // 检查是否形成打劫
-                if (capturedStones.size() == 1) {
-                    koMove = new Move(x, y, currentPlayer);
-                } else {
-                    koMove = null;
-                }
-
-                // 如果有游戏树，创建或选择节点（只创建一次）
-                if (currentNode != null) {
-                    addMoveToGameTree(move);
-                }
-
-                switchPlayer();
-                return true;
+            // 检查是否形成打劫
+            if (capturedStones.size() == 1) {
+                koMove = new Move(x, y, currentPlayer);
+            } else {
+                koMove = null;
             }
+
+            // 如果有游戏树，创建或选择节点（只创建一次）
+            if (currentNode != null) {
+                addMoveToGameTree(move);
+            }
+
+            switchPlayer();
+            lastErrorMessage = ""; // 清除错误消息
+            return true;
         }
 
+        lastErrorMessage = "自杀着法不允许";
         return false;
     }
 
@@ -457,6 +499,63 @@ public class GoBoard {
 
         switchPlayer();
         return true;
+    }
+    
+    /**
+     * 用于重建棋盘的落子方法（不打印日志，允许在已有棋子的位置落子）
+     * 在重建棋盘时使用，确保提子逻辑正确执行
+     */
+    private boolean placeStoneForReconstruction(int x, int y) {
+        // 虚手处理
+        if (x == -1 && y == -1) {
+            Move passMove = new Move(-1, -1, currentPlayer);
+            moveHistory.add(passMove);
+            lastMove = passMove;
+            currentMoveIndex = moveHistory.size() - 1;
+            koMove = null;
+            switchPlayer();
+            return true;
+        }
+
+        // 边界检查（重建时仍然需要）
+        if (x < 0 || x >= BOARD_SIZE || y < 0 || y >= BOARD_SIZE) {
+            return false;
+        }
+
+        // 重建棋盘时跳过打劫检查，因为棋谱记录的是实际发生的走子
+        // 棋谱中的走子可能违反打劫规则，但我们需要按照棋谱重建
+        
+        // 模拟落子
+        int[][] tempBoard = copyBoard(board);
+        tempBoard[y][x] = currentPlayer;
+
+        // 先提掉被包围的对手棋子
+        List<Position> capturedStones = captureStones(tempBoard, x, y);
+        
+        // 检查是否自杀（提子后）
+        if (hasLiberty(tempBoard, x, y, currentPlayer)) {
+            // 执行落子
+            board = tempBoard;
+            Move move = new Move(x, y, currentPlayer, capturedStones);
+            moveHistory.add(move);
+            lastMove = move;
+            currentMoveIndex = moveHistory.size() - 1;
+
+            // 检查是否形成打劫
+            if (capturedStones.size() == 1) {
+                koMove = new Move(x, y, currentPlayer);
+            } else {
+                koMove = null;
+            }
+
+            // 重建棋盘时不操作游戏树
+            // 游戏树已经在加载时构建完成
+
+            switchPlayer();
+            return true;
+        }
+
+        return false;
     }
 
     /**
@@ -676,6 +775,13 @@ public class GoBoard {
         }
         if (whiteToRemove != null) {
             whiteHandicapStones.remove(whiteToRemove);
+            board[y][x] = EMPTY;
+            return;
+        }
+        
+        // 如果既不在黑棋列表也不在白棋列表，可能是正常对局中的棋子
+        // 直接清除棋盘上的棋子
+        if (board[y][x] != EMPTY) {
             board[y][x] = EMPTY;
         }
     }
@@ -1233,5 +1339,183 @@ public class GoBoard {
             this.x = x;
             this.y = y;
         }
+    }
+    
+    // ==================== 状态保存与恢复 ====================
+    
+    /**
+     * 获取当前棋局的序列化字符串
+     */
+    public String serialize() {
+        StringBuilder sb = new StringBuilder();
+        
+        // 保存棋盘状态
+        for (int y = 0; y < BOARD_SIZE; y++) {
+            for (int x = 0; x < BOARD_SIZE; x++) {
+                sb.append(board[y][x]);
+            }
+        }
+        sb.append("|");
+        
+        // 保存当前玩家
+        sb.append(currentPlayer).append("|");
+        
+        // 保存落子历史（简化版，只保存坐标和玩家）
+        for (Move move : moveHistory) {
+            sb.append(move.x).append(",").append(move.y).append(",").append(move.player).append(";");
+        }
+        sb.append("|");
+        
+        // 保存让子信息
+        sb.append(handicap).append("|");
+        
+        // 保存黑棋让子
+        for (Position pos : blackHandicapStones) {
+            sb.append(pos.x).append(",").append(pos.y).append(";");
+        }
+        sb.append("|");
+        
+        // 保存白棋让子
+        for (Position pos : whiteHandicapStones) {
+            sb.append(pos.x).append(",").append(pos.y).append(";");
+        }
+        sb.append("|");
+        
+        // 保存游戏信息
+        sb.append(blackPlayer != null ? blackPlayer : "").append("|");
+        sb.append(whitePlayer != null ? whitePlayer : "").append("|");
+        sb.append(result != null ? result : "").append("|");
+        sb.append(date != null ? date : "");
+        
+        return sb.toString();
+    }
+    
+    /**
+     * 从序列化字符串恢复棋局
+     */
+    public void deserialize(String serialized) {
+        if (serialized == null || serialized.isEmpty()) {
+            return;
+        }
+        
+        String[] parts = serialized.split("\\|", -1);
+        if (parts.length < 11) {
+            return;
+        }
+        
+        try {
+            // 恢复棋盘状态
+            String boardStr = parts[0];
+            if (boardStr.length() == BOARD_SIZE * BOARD_SIZE) {
+                for (int y = 0; y < BOARD_SIZE; y++) {
+                    for (int x = 0; x < BOARD_SIZE; x++) {
+                        int index = y * BOARD_SIZE + x;
+                        board[y][x] = Character.getNumericValue(boardStr.charAt(index));
+                    }
+                }
+            }
+            
+            // 恢复当前玩家
+            if (!parts[1].isEmpty()) {
+                currentPlayer = Integer.parseInt(parts[1]);
+            }
+            
+            // 清除现有历史
+            moveHistory.clear();
+            // 恢复落子历史
+            if (!parts[2].isEmpty()) {
+                String[] moves = parts[2].split(";");
+                for (String moveStr : moves) {
+                    if (!moveStr.isEmpty()) {
+                        String[] moveParts = moveStr.split(",");
+                        if (moveParts.length == 3) {
+                            int x = Integer.parseInt(moveParts[0]);
+                            int y = Integer.parseInt(moveParts[1]);
+                            int player = Integer.parseInt(moveParts[2]);
+                            moveHistory.add(new Move(x, y, player));
+                        }
+                    }
+                }
+            }
+            
+            // 恢复当前移动索引
+            currentMoveIndex = moveHistory.size() - 1;
+            if (currentMoveIndex >= 0) {
+                lastMove = moveHistory.get(currentMoveIndex);
+            } else {
+                lastMove = null;
+            }
+            
+            // 恢复让子数
+            if (!parts[3].isEmpty()) {
+                handicap = Integer.parseInt(parts[3]);
+            }
+            
+            // 清除现有让子
+            blackHandicapStones.clear();
+            whiteHandicapStones.clear();
+            
+            // 恢复黑棋让子
+            if (!parts[4].isEmpty()) {
+                String[] stones = parts[4].split(";");
+                for (String stoneStr : stones) {
+                    if (!stoneStr.isEmpty()) {
+                        String[] stoneParts = stoneStr.split(",");
+                        if (stoneParts.length == 2) {
+                            int x = Integer.parseInt(stoneParts[0]);
+                            int y = Integer.parseInt(stoneParts[1]);
+                            blackHandicapStones.add(new Position(x, y));
+                        }
+                    }
+                }
+            }
+            
+            // 恢复白棋让子
+            if (!parts[5].isEmpty()) {
+                String[] stones = parts[5].split(";");
+                for (String stoneStr : stones) {
+                    if (!stoneStr.isEmpty()) {
+                        String[] stoneParts = stoneStr.split(",");
+                        if (stoneParts.length == 2) {
+                            int x = Integer.parseInt(stoneParts[0]);
+                            int y = Integer.parseInt(stoneParts[1]);
+                            whiteHandicapStones.add(new Position(x, y));
+                        }
+                    }
+                }
+            }
+            
+            // 恢复游戏信息
+            blackPlayer = parts[6].isEmpty() ? "黑方" : parts[6];
+            whitePlayer = parts[7].isEmpty() ? "白方" : parts[7];
+            result = parts[8];
+            date = parts[9];
+            
+        } catch (Exception e) {
+            e.printStackTrace();
+            // 如果恢复失败，重置为初始状态
+            newGame();
+        }
+    }
+    
+    /**
+     * 获取最后一次落子失败的错误消息
+     */
+    public String getLastErrorMessage() {
+        return lastErrorMessage != null ? lastErrorMessage : "";
+    }
+    
+    /**
+     * 清除错误消息
+     */
+    public void clearErrorMessage() {
+        lastErrorMessage = "";
+    }
+    
+    /**
+     * 简化版序列化，用于保存到SharedPreferences
+     */
+    public String serializeSimple() {
+        return serialize();
     }
 }

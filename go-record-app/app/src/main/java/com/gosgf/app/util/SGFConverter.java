@@ -353,7 +353,9 @@ public class SGFConverter {
             try {
                 int handicap = Integer.parseInt(node.properties.get(PROP_HANDICAP).get(0));
                 board.setHandicap(handicap);
-                board.setupHandicap(handicap);
+                if (handicap > 0) {
+                    board.setupHandicap(handicap);
+                }
             } catch (NumberFormatException e) {
                 // 忽略无效的让子数
             }

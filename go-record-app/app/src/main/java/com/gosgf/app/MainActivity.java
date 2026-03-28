@@ -69,8 +69,25 @@ import java.util.List;
             getSupportActionBar().hide();
         }
 
-        // 初始化棋盘
-        board = new GoBoard();
+        // 尝试从保存的状态恢复棋局
+        if (savedInstanceState != null) {
+            String savedBoardState = savedInstanceState.getString("board_state", null);
+            if (savedBoardState != null) {
+                board = new GoBoard();
+                board.deserialize(savedBoardState);
+            } else {
+                board = new GoBoard();
+            }
+        } else {
+            // 尝试从SharedPreferences恢复上次的棋局
+            String savedState = getPreferences(Context.MODE_PRIVATE).getString("last_game_state", null);
+            if (savedState != null) {
+                board = new GoBoard();
+                board.deserialize(savedState);
+            } else {
+                board = new GoBoard();
+            }
+        }
 
         // 初始化视图
         boardView = findViewById(R.id.boardView);
@@ -197,6 +214,14 @@ import java.util.List;
         if (success) {
             boardView.refresh();
             updateCommentDisplay();
+        } else {
+            // 显示错误提示
+            String errorMessage = board.getLastErrorMessage();
+            if (errorMessage != null && !errorMessage.isEmpty()) {
+                Toast.makeText(this, errorMessage, Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(this, "此处不能落子", Toast.LENGTH_SHORT).show();
+            }
         }
     }
 
@@ -204,6 +229,8 @@ import java.util.List;
         board.newGame();
         boardView.refresh();
         updateCommentDisplay();
+        // 清除保存的游戏状态
+        clearSavedGameState();
     }
 
     /**
@@ -635,5 +662,73 @@ import java.util.List;
             e.printStackTrace();
             Toast.makeText(this, getString(R.string.save_failed), Toast.LENGTH_SHORT).show();
         }
+    }
+    
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        super.onSaveInstanceState(outState);
+        // 保存当前棋局状态
+        if (board != null) {
+            String boardState = board.serialize();
+            outState.putString("board_state", boardState);
+        }
+    }
+    
+    @Override
+    protected void onRestoreInstanceState(Bundle savedInstanceState) {
+        super.onRestoreInstanceState(savedInstanceState);
+        // 恢复棋局状态
+        if (savedInstanceState != null && board != null) {
+            String savedBoardState = savedInstanceState.getString("board_state", null);
+            if (savedBoardState != null) {
+                board.deserialize(savedBoardState);
+                boardView.refresh();
+                updateCommentDisplay();
+            }
+        }
+    }
+    
+    @Override
+    protected void onPause() {
+        super.onPause();
+        // 保存棋局到SharedPreferences，以便应用被杀死后也能恢复
+        saveGameStateToPreferences();
+    }
+    
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // 刷新显示
+        if (boardView != null) {
+            boardView.refresh();
+        }
+    }
+    
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        // 保存棋局状态
+        saveGameStateToPreferences();
+    }
+    
+    /**
+     * 保存棋局状态到SharedPreferences
+     */
+    private void saveGameStateToPreferences() {
+        if (board != null) {
+            String boardState = board.serialize();
+            getPreferences(Context.MODE_PRIVATE).edit()
+                .putString("last_game_state", boardState)
+                .apply();
+        }
+    }
+    
+    /**
+     * 清除保存的棋局状态
+     */
+    private void clearSavedGameState() {
+        getPreferences(Context.MODE_PRIVATE).edit()
+            .remove("last_game_state")
+            .apply();
     }
 }
