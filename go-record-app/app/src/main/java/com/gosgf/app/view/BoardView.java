@@ -181,18 +181,19 @@ public class BoardView extends View {
 
         // 使用实际可用尺寸，确保棋盘完全显示
         int size = Math.min(w, h);
-        int margin = Math.max(MARGIN, Math.min(w, h) / 40); // 动态边距
+        // 增加边距以确保坐标完全显示
+        int margin = Math.max(MARGIN, Math.min(w, h) / 30); // 增大边距
         boardWidth = size - 2 * margin;
         boardHeight = size - 2 * margin;
         cellSize = boardWidth / (BOARD_SIZE - 1);
 
-        // 棋盘整体向右偏移，给左侧坐标留出空间（半个棋子距离）
-        int offset = (int)(cellSize * 0.2f);
-        marginLeft = MARGIN + offset;
+        // 棋盘整体向右偏移，给左侧坐标留出空间
+        int offset = (int)(cellSize * 0.3f); // 增加偏移量
+        marginLeft = margin + offset;
 
-        // 棋盘向上偏移
-        int offsetTop = (int)(cellSize * 0.2f);
-        marginTop = MARGIN - offsetTop;
+        // 棋盘向下偏移，给顶部坐标留出更多空间
+        int offsetTop = (int)(cellSize * 0.1f); // 减少向上偏移
+        marginTop = margin + offsetTop;
     }
 
     // 棋盘左边距（用于偏移棋盘位置）
@@ -208,31 +209,28 @@ public class BoardView extends View {
             return;
         }
         
-        // 绘制外延背景（橙色）
+        // 重新绘制整个棋盘
+        // 上下外延均衡
+        int topOuter = 30;
+
+        // 绘制整个背景（橙色外延）
         Paint outerPaint = new Paint();
         outerPaint.setColor(getResources().getColor(android.R.color.holo_orange_light));
         outerPaint.setStyle(Paint.Style.FILL);
+        canvas.drawRect(0, 0, getWidth(), getHeight(), outerPaint);
 
-        // 上方外延 - 增加
-        float offset = cellSize * 0.6f;
-        float coordTop = marginTop - offset + cellSize * 0.3f;
-        canvas.drawRect(0, 0, getWidth(), coordTop, outerPaint);
+        // 棋盘背景（木纹色）
+        // 棋盘顶部 = 上方外延
+        float boardTop = topOuter;
+        // 棋盘底部 = 上方外延 + 棋盘高度
+        float boardBottom = topOuter + boardHeight;
 
-        // 下方外延 - 减少
-        canvas.drawRect(0, MARGIN + boardHeight - cellSize * 0.1f, getWidth(), getHeight(), outerPaint);
+        // 绘制棋盘背景
+        canvas.drawRect(marginLeft, marginTop, marginLeft + boardWidth, marginTop + boardHeight, boardPaint);
 
-        // 左侧外延
-        canvas.drawRect(0, coordTop, marginLeft, MARGIN + boardHeight - cellSize * 0.1f, outerPaint);
-        // 右侧外延
-        canvas.drawRect(marginLeft + boardWidth, coordTop, getWidth(), MARGIN + boardHeight - cellSize * 0.1f, outerPaint);
-
-        // 绘制棋盘背景（木纹色）- 覆盖棋盘和坐标区域
-        canvas.drawRect(marginLeft, coordTop,
-                        marginLeft + boardWidth, MARGIN + boardHeight, boardPaint);
-        
         // 绘制棋盘线条
         drawBoardLines(canvas);
-        
+
         // 绘制星位点
         drawStarPoints(canvas);
 
@@ -287,22 +285,21 @@ public class BoardView extends View {
         Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         textPaint.setTextSize(cellSize * 0.5f);
         textPaint.setTextAlign(Paint.Align.CENTER);
+        textPaint.setColor(Color.BLACK);
 
         float offset = cellSize * 0.6f; // 与格子保持半个棋子以上距离
 
         // 只绘制顶部字母坐标（固定位置，不随棋盘移动）
         for (int i = 0; i < BOARD_SIZE; i++) {
-            float x = MARGIN + i * cellSize;
+            float x = marginLeft + i * cellSize;
             float y = marginTop - offset;
-            textPaint.setColor(Color.BLACK);
             canvas.drawText(letters[i], x, y, textPaint);
         }
 
         // 只绘制左侧数字坐标（固定位置，不随棋盘移动）
         for (int i = 0; i < BOARD_SIZE; i++) {
-            float x = MARGIN - offset;
+            float x = marginLeft - offset - cellSize * 0.2f; // 向左移动一些
             float y = marginTop + i * cellSize + cellSize * 0.15f;
-            textPaint.setColor(Color.BLACK);
             canvas.drawText(numbers[i], x, y, textPaint);
         }
     }
