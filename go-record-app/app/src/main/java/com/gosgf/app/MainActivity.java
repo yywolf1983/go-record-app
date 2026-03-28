@@ -365,7 +365,7 @@ import java.util.List;
         EditText editText = new EditText(this);
         editText.setText(currentComment);
         editText.setHint("输入注释...");
-        editText.setMinLines(3);
+        editText.setMinLines(6); // 增大注释框
 
         new AlertDialog.Builder(this)
             .setTitle("编辑注释")

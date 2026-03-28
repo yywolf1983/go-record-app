@@ -313,7 +313,7 @@ public class BoardView extends View {
                 if (stone != GoBoard.EMPTY) {
                     float px = marginLeft + x * cellSize;
                     float py = marginTop + y * cellSize;
-                    float radius = cellSize / 2 - 4f;
+                    float radius = cellSize / 2 - 2f; // 增大棋子大小
 
                     if (stone == GoBoard.BLACK) {
                         // 绘制黑子阴影
