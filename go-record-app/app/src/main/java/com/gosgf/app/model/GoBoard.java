@@ -370,7 +370,6 @@ public class GoBoard {
         System.out.println("x=" + x + ", y=" + y);
         System.out.println("currentPlayer=" + (currentPlayer == BLACK ? "黑" : "白"));
         System.out.println("koMove: " + (koMove != null ? koMove.x + "," + koMove.y : "null"));
-        System.out.println("board[" + y + "][" + x + "]=" + board[y][x]);
 
         // 虚手处理
         if (x == -1 && y == -1) {
