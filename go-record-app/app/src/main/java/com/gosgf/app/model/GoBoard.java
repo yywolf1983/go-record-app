@@ -25,6 +25,10 @@ public class GoBoard {
     private int currentMoveIndex;
     private List<Position> blackHandicapStones;
     private List<Position> whiteHandicapStones;
+    private List<Position> marks; // 标记位置列表（圆圈）
+    private List<Position> crossMarks; // 叉号标记
+    private List<Position> squareMarks; // 方块标记
+    private List<Position> triangleMarks; // 三角形标记
 
     // SGF 节点数据结构（游戏树）
     public static class SGFNode {
@@ -69,6 +73,10 @@ public class GoBoard {
         handicap = 0;
         blackHandicapStones = new ArrayList<>();
         whiteHandicapStones = new ArrayList<>();
+        marks = new ArrayList<>();
+        crossMarks = new ArrayList<>();
+        squareMarks = new ArrayList<>();
+        triangleMarks = new ArrayList<>();
         gameTreeRoot = null;
         currentNode = null;
     }
@@ -865,6 +873,130 @@ public class GoBoard {
      */
     public List<Position> getWhiteHandicapStones() {
         return whiteHandicapStones;
+    }
+
+    /**
+     * 添加标记
+     */
+    public void addMark(int x, int y) {
+        // 检查是否已存在
+        for (Position pos : marks) {
+            if (pos.x == x && pos.y == y) {
+                return; // 已存在，不重复添加
+            }
+        }
+        marks.add(new Position(x, y));
+    }
+
+    /**
+     * 移除标记
+     */
+    public void removeMark(int x, int y) {
+        Position toRemove = null;
+        for (Position pos : marks) {
+            if (pos.x == x && pos.y == y) {
+                toRemove = pos;
+                break;
+            }
+        }
+        if (toRemove != null) {
+            marks.remove(toRemove);
+        }
+    }
+
+    /**
+     * 获取标记列表
+     */
+    public List<Position> getMarks() {
+        return marks;
+    }
+
+    /**
+     * 添加叉号标记
+     */
+    public void addCrossMark(int x, int y) {
+        for (Position pos : crossMarks) {
+            if (pos.x == x && pos.y == y) return;
+        }
+        crossMarks.add(new Position(x, y));
+    }
+
+    /**
+     * 移除叉号标记
+     */
+    public void removeCrossMark(int x, int y) {
+        Position toRemove = null;
+        for (Position pos : crossMarks) {
+            if (pos.x == x && pos.y == y) {
+                toRemove = pos;
+                break;
+            }
+        }
+        if (toRemove != null) crossMarks.remove(toRemove);
+    }
+
+    public List<Position> getCrossMarks() { return crossMarks; }
+
+    /**
+     * 添加方块标记
+     */
+    public void addSquareMark(int x, int y) {
+        for (Position pos : squareMarks) {
+            if (pos.x == x && pos.y == y) return;
+        }
+        squareMarks.add(new Position(x, y));
+    }
+
+    /**
+     * 移除方块标记
+     */
+    public void removeSquareMark(int x, int y) {
+        Position toRemove = null;
+        for (Position pos : squareMarks) {
+            if (pos.x == x && pos.y == y) {
+                toRemove = pos;
+                break;
+            }
+        }
+        if (toRemove != null) squareMarks.remove(toRemove);
+    }
+
+    public List<Position> getSquareMarks() { return squareMarks; }
+
+    /**
+     * 添加三角形标记
+     */
+    public void addTriangleMark(int x, int y) {
+        for (Position pos : triangleMarks) {
+            if (pos.x == x && pos.y == y) return;
+        }
+        triangleMarks.add(new Position(x, y));
+    }
+
+    /**
+     * 移除三角形标记
+     */
+    public void removeTriangleMark(int x, int y) {
+        Position toRemove = null;
+        for (Position pos : triangleMarks) {
+            if (pos.x == x && pos.y == y) {
+                toRemove = pos;
+                break;
+            }
+        }
+        if (toRemove != null) triangleMarks.remove(toRemove);
+    }
+
+    public List<Position> getTriangleMarks() { return triangleMarks; }
+
+    /**
+     * 清除所有标记
+     */
+    public void clearMarks() {
+        marks.clear();
+        crossMarks.clear();
+        squareMarks.clear();
+        triangleMarks.clear();
     }
 
     /**

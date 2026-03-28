@@ -73,6 +73,9 @@ public class SGFConverter {
         // 添加座子信息（AB/AW属性）
         addHandicapStonesToNode(board, root);
 
+        // 添加标记信息（CR属性 - 圆圈标记）
+        addMarksToNode(board, root);
+
         // 如果有游戏树，转换为SGF节点树
         GoBoard.SGFNode gameTreeRoot = board.getGameTreeRoot();
         if (gameTreeRoot != null) {
@@ -108,6 +111,47 @@ public class SGFConverter {
         for (GoBoard.Position pos : board.getWhiteHandicapStones()) {
             String vertex = boardToVertex(pos.x, pos.y);
             node.addProperty(PROP_WHITE_STONES, vertex);
+        }
+    }
+
+    /**
+     * 将标记信息添加到SGF节点
+     */
+    private static void addMarksToNode(GoBoard board, SGFParser.Node node) {
+        // 保存圆圈标记（CR属性）
+        java.util.List<GoBoard.Position> marks = board.getMarks();
+        if (marks != null && !marks.isEmpty()) {
+            for (GoBoard.Position pos : marks) {
+                String vertex = boardToVertex(pos.x, pos.y);
+                node.addProperty(PROP_CIRCLE, vertex);
+            }
+        }
+
+        // 保存叉号标记（MA属性）
+        java.util.List<GoBoard.Position> crossMarks = board.getCrossMarks();
+        if (crossMarks != null && !crossMarks.isEmpty()) {
+            for (GoBoard.Position pos : crossMarks) {
+                String vertex = boardToVertex(pos.x, pos.y);
+                node.addProperty(PROP_CROSS, vertex);
+            }
+        }
+
+        // 保存方块标记（SQ属性）
+        java.util.List<GoBoard.Position> squareMarks = board.getSquareMarks();
+        if (squareMarks != null && !squareMarks.isEmpty()) {
+            for (GoBoard.Position pos : squareMarks) {
+                String vertex = boardToVertex(pos.x, pos.y);
+                node.addProperty(PROP_SQUARE, vertex);
+            }
+        }
+
+        // 保存三角形标记（TR属性）
+        java.util.List<GoBoard.Position> triangleMarks = board.getTriangleMarks();
+        if (triangleMarks != null && !triangleMarks.isEmpty()) {
+            for (GoBoard.Position pos : triangleMarks) {
+                String vertex = boardToVertex(pos.x, pos.y);
+                node.addProperty(PROP_TRIANGLE, vertex);
+            }
         }
     }
 
@@ -335,6 +379,54 @@ public class SGFConverter {
                 for (int[] coord : coords) {
                     if (coord[0] != -1 && coord[1] != -1) {
                         board.addWhiteHandicapStone(coord[0], coord[1]);
+                    }
+                }
+            }
+        }
+
+        // 加载标记（CR属性 - 圆圈标记）
+        if (node.properties.containsKey(PROP_CIRCLE)) {
+            for (String vertexList : node.properties.get(PROP_CIRCLE)) {
+                List<int[]> coords = SGFParser.parseCompressedVertices(vertexList);
+                for (int[] coord : coords) {
+                    if (coord[0] != -1 && coord[1] != -1) {
+                        board.addMark(coord[0], coord[1]);
+                    }
+                }
+            }
+        }
+
+        // 加载叉号标记（MA属性）
+        if (node.properties.containsKey(PROP_CROSS)) {
+            for (String vertexList : node.properties.get(PROP_CROSS)) {
+                List<int[]> coords = SGFParser.parseCompressedVertices(vertexList);
+                for (int[] coord : coords) {
+                    if (coord[0] != -1 && coord[1] != -1) {
+                        board.addCrossMark(coord[0], coord[1]);
+                    }
+                }
+            }
+        }
+
+        // 加载方块标记（SQ属性）
+        if (node.properties.containsKey(PROP_SQUARE)) {
+            for (String vertexList : node.properties.get(PROP_SQUARE)) {
+                List<int[]> coords = SGFParser.parseCompressedVertices(vertexList);
+                for (int[] coord : coords) {
+                    if (coord[0] != -1 && coord[1] != -1) {
+                        board.addSquareMark(coord[0], coord[1]);
+                    }
+                }
+            }
+        }
+
+        // 加载三角形标记（TR属性）
+        if (node.properties.containsKey(PROP_TRIANGLE)) {
+            for (String vertexList : node.properties.get(PROP_TRIANGLE)) {
+                List<int[]> coords = SGFParser.parseCompressedVertices(vertexList);
+                for (int[] coord : coords) {
+                    if (coord[0] != -1 && coord[1] != -1) {
+                        board.addTriangleMark(coord[0], coord[1]);
                     }
                 }
             }

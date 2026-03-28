@@ -32,11 +32,15 @@ public class BoardView extends View {
     private OnBoardTouchListener touchListener;
     private OnBranchSelectListener branchSelectListener;
     private OnBranchDeleteListener branchDeleteListener;
+    private OnMarkPlaceListener markPlaceListener;
 
     // 摆子模式
     private boolean isPlaceMode = false;
     private int lastPlaceX = -1; // 上一次摆子的位置
     private int lastPlaceY = -1;
+
+    // 标记模式
+    private boolean isMarkMode = false;
 
     // 虚影位置缓存
     private java.util.Map<String, GoBoard.Move> branchPositions;
@@ -57,6 +61,10 @@ public class BoardView extends View {
 
     public interface OnBranchDeleteListener {
         void onBranchDelete(GoBoard.Move branchMove);
+    }
+
+    public interface OnMarkPlaceListener {
+        void onMarkPlace(int x, int y);
     }
     
     public BoardView(Context context) {
@@ -132,6 +140,23 @@ public class BoardView extends View {
         this.branchDeleteListener = listener;
     }
 
+    public void setOnMarkPlaceListener(OnMarkPlaceListener listener) {
+        this.markPlaceListener = listener;
+    }
+
+    // 设置标记模式
+    public void setMarkMode(boolean enabled) {
+        this.isMarkMode = enabled;
+        if (enabled) {
+            isPlaceMode = false; // 关闭摆子模式
+        }
+    }
+
+    // 获取标记模式状态
+    public boolean isMarkMode() {
+        return isMarkMode;
+    }
+
     // 设置已选择的分支位置
     public void setSelectedBranchPosition(String positionKey) {
         selectedBranchPositions.clear();
@@ -187,6 +212,9 @@ public class BoardView extends View {
 
         // 绘制最后一步
         drawLastMove(canvas);
+
+        // 绘制标记
+        drawMarks(canvas);
 
         // 绘制坐标
         drawCoordinates(canvas);
@@ -319,6 +347,80 @@ public class BoardView extends View {
         }
     }
 
+    private void drawMarks(Canvas canvas) {
+        float radius = cellSize / 3;
+        float markerSize = cellSize / 2.5f;
+
+        Paint circlePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        circlePaint.setColor(Color.RED);
+        circlePaint.setStyle(Paint.Style.STROKE);
+        circlePaint.setStrokeWidth(3);
+
+        Paint crossPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        crossPaint.setColor(Color.RED);
+        crossPaint.setStyle(Paint.Style.STROKE);
+        crossPaint.setStrokeWidth(3);
+
+        Paint squarePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        squarePaint.setColor(Color.RED);
+        squarePaint.setStyle(Paint.Style.STROKE);
+        squarePaint.setStrokeWidth(3);
+
+        Paint trianglePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        trianglePaint.setColor(Color.RED);
+        trianglePaint.setStyle(Paint.Style.STROKE);
+        trianglePaint.setStrokeWidth(3);
+
+        // 绘制圆圈标记 (CR)
+        java.util.List<GoBoard.Position> marks = board.getMarks();
+        if (marks != null) {
+            for (GoBoard.Position pos : marks) {
+                float px = MARGIN + pos.x * cellSize;
+                float py = MARGIN + pos.y * cellSize;
+                canvas.drawCircle(px, py, radius, circlePaint);
+            }
+        }
+
+        // 绘制叉号标记 (MA)
+        java.util.List<GoBoard.Position> crossMarks = board.getCrossMarks();
+        if (crossMarks != null) {
+            for (GoBoard.Position pos : crossMarks) {
+                float px = MARGIN + pos.x * cellSize;
+                float py = MARGIN + pos.y * cellSize;
+                float s = markerSize / 2;
+                canvas.drawLine(px - s, py - s, px + s, py + s, crossPaint);
+                canvas.drawLine(px + s, py - s, px - s, py + s, crossPaint);
+            }
+        }
+
+        // 绘制方块标记 (SQ)
+        java.util.List<GoBoard.Position> squareMarks = board.getSquareMarks();
+        if (squareMarks != null) {
+            for (GoBoard.Position pos : squareMarks) {
+                float px = MARGIN + pos.x * cellSize;
+                float py = MARGIN + pos.y * cellSize;
+                float s = markerSize / 2;
+                canvas.drawRect(px - s, py - s, px + s, py + s, squarePaint);
+            }
+        }
+
+        // 绘制三角形标记 (TR)
+        java.util.List<GoBoard.Position> triangleMarks = board.getTriangleMarks();
+        if (triangleMarks != null) {
+            for (GoBoard.Position pos : triangleMarks) {
+                float px = MARGIN + pos.x * cellSize;
+                float py = MARGIN + pos.y * cellSize;
+                float s = markerSize / 2;
+                android.graphics.Path path = new android.graphics.Path();
+                path.moveTo(px, py - s);
+                path.lineTo(px - s, py + s);
+                path.lineTo(px + s, py + s);
+                path.close();
+                canvas.drawPath(path, trianglePaint);
+            }
+        }
+    }
+
     private void drawBranchStones(Canvas canvas) {
         java.util.List<GoBoard.Move> branchMoves = board.getBranchMoves();
 
@@ -435,6 +537,14 @@ public class BoardView extends View {
                         lastPlaceY = boardY;
                     }
                     refresh();
+                    return true;
+                }
+
+                // 如果在标记模式下
+                if (isMarkMode) {
+                    if (markPlaceListener != null) {
+                        markPlaceListener.onMarkPlace(boardX, boardY);
+                    }
                     return true;
                 }
 

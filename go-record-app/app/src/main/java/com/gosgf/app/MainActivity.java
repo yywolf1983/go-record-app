@@ -197,9 +197,6 @@ import java.util.List;
         if (success) {
             boardView.refresh();
             updateCommentDisplay();
-            Toast.makeText(this, getString(R.string.valid_move), Toast.LENGTH_SHORT).show();
-        } else {
-            Toast.makeText(this, getString(R.string.invalid_move), Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -207,7 +204,6 @@ import java.util.List;
         board.newGame();
         boardView.refresh();
         updateCommentDisplay();
-        Toast.makeText(this, getString(R.string.action_new), Toast.LENGTH_SHORT).show();
     }
 
     /**
@@ -313,49 +309,39 @@ import java.util.List;
     }
     
     private void onSettings() {
-        System.out.println("onSettings 被点击");
-        // 打开设置界面
-        Toast.makeText(this, getString(R.string.action_settings), Toast.LENGTH_SHORT).show();
+        // 打开设置界面（暂未实现）
     }
-    
+
     private void onToStart() {
         // 跳转到起始状态
         board.resetToStart();
         boardView.refresh();
         updateCommentDisplay();
-        Toast.makeText(this, getString(R.string.action_to_start), Toast.LENGTH_SHORT).show();
     }
-    
+
     private void onPrevious() {
         // 上一步
         boolean success = board.previousMove();
         if (success) {
             boardView.refresh();
             updateCommentDisplay();
-            Toast.makeText(this, getString(R.string.action_previous), Toast.LENGTH_SHORT).show();
-        } else {
-            Toast.makeText(this, "已经是第一步了", Toast.LENGTH_SHORT).show();
         }
     }
-    
+
     private void onNext() {
         // 下一步
         boolean success = board.nextMove();
         if (success) {
             boardView.refresh();
             updateCommentDisplay();
-            Toast.makeText(this, getString(R.string.action_next), Toast.LENGTH_SHORT).show();
-        } else {
-            Toast.makeText(this, "已经是最后一步了", Toast.LENGTH_SHORT).show();
         }
     }
-    
+
     private void onPass() {
         // 虚手
         board.placeStone(-1, -1);
         boardView.refresh();
         updateCommentDisplay();
-        Toast.makeText(this, getString(R.string.action_pass), Toast.LENGTH_SHORT).show();
     }
 
     /**
@@ -392,10 +378,68 @@ import java.util.List;
             .setNegativeButton("取消", null)
             .show();
     }
-    
+
+    // 标记模式
+    private boolean isMarkMode = false;
+    private int currentMarkType = 0; // 0=圆圈, 1=叉号, 2=方块, 3=三角形
+    private BoardView.OnMarkPlaceListener markPlaceListener;
+
     private void onMark() {
-        // 添加标记
-        Toast.makeText(this, getString(R.string.action_mark), Toast.LENGTH_SHORT).show();
+        if (isMarkMode) {
+            // 退出标记模式
+            isMarkMode = false;
+            btnMark.setText("标记");
+            boardView.refresh();
+            return;
+        }
+
+        // 弹出标记类型选择
+        String[] markTypes = {"圆圈 ○", "叉号 ✕", "方块 □", "三角形 △"};
+        new AlertDialog.Builder(this)
+            .setTitle("选择标记类型")
+            .setItems(markTypes, (dialog, which) -> {
+                currentMarkType = which;
+                isMarkMode = true;
+                boardView.setMarkMode(true);
+
+                // 关闭摆子模式
+                isPlaceMode = false;
+                boardView.setPlaceMode(false);
+                btnPlace.setText("摆子");
+
+                btnMark.setText("完成标记");
+
+                // 设置标记放置监听器
+                markPlaceListener = (x, y) -> {
+                    boolean found = false;
+                    // 检查所有类型的标记
+                    if (currentMarkType == 0) {
+                        for (GoBoard.Position pos : board.getMarks()) {
+                            if (pos.x == x && pos.y == y) { board.removeMark(x, y); found = true; break; }
+                        }
+                        if (!found) board.addMark(x, y);
+                    } else if (currentMarkType == 1) {
+                        for (GoBoard.Position pos : board.getCrossMarks()) {
+                            if (pos.x == x && pos.y == y) { board.removeCrossMark(x, y); found = true; break; }
+                        }
+                        if (!found) board.addCrossMark(x, y);
+                    } else if (currentMarkType == 2) {
+                        for (GoBoard.Position pos : board.getSquareMarks()) {
+                            if (pos.x == x && pos.y == y) { board.removeSquareMark(x, y); found = true; break; }
+                        }
+                        if (!found) board.addSquareMark(x, y);
+                    } else if (currentMarkType == 3) {
+                        for (GoBoard.Position pos : board.getTriangleMarks()) {
+                            if (pos.x == x && pos.y == y) { board.removeTriangleMark(x, y); found = true; break; }
+                        }
+                        if (!found) board.addTriangleMark(x, y);
+                    }
+                    boardView.refresh();
+                };
+                boardView.setOnMarkPlaceListener(markPlaceListener);
+                boardView.refresh();
+            })
+            .show();
     }
     
     private void onUndo() {
@@ -404,11 +448,9 @@ import java.util.List;
         board.undo();
         boardView.refresh();
         updateCommentDisplay();
-        Toast.makeText(this, getString(R.string.action_undo), Toast.LENGTH_SHORT).show();
     }
 
     private void onDeleteBranch() {
-        System.out.println("onDeleteBranch 被点击");
         try {
             // 获取当前位置的分支
             List<Move> branchMoves = board.getBranchMoves();
@@ -541,16 +583,10 @@ import java.util.List;
             
             // 解析SGF文件
             try {
-                Toast.makeText(this, "开始解析SGF文件...", Toast.LENGTH_SHORT).show();
                 SGFConverter.loadBoardFromSGFString(board, sgfContent);
-
-                // 调试信息
-                int moveCount = board.getMoveHistory().size();
-                Toast.makeText(this, "加载成功!走子数: " + moveCount, Toast.LENGTH_LONG).show();
 
                 boardView.refresh();
                 updateCommentDisplay();
-                Toast.makeText(this, getString(R.string.load_success), Toast.LENGTH_SHORT).show();
             } catch (SGFParser.SGFParseException e) {
                 e.printStackTrace();
                 Toast.makeText(this, "无法解析SGF文件：" + e.getMessage(), Toast.LENGTH_LONG).show();
