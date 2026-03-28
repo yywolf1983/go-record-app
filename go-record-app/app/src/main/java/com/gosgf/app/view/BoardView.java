@@ -179,13 +179,26 @@ public class BoardView extends View {
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
 
-        // 使用实际可用尺寸,减去适当的边距
+        // 使用实际可用尺寸，确保棋盘完全显示
         int size = Math.min(w, h);
         int margin = Math.max(MARGIN, Math.min(w, h) / 40); // 动态边距
         boardWidth = size - 2 * margin;
         boardHeight = size - 2 * margin;
         cellSize = boardWidth / (BOARD_SIZE - 1);
+
+        // 棋盘整体向右偏移，给左侧坐标留出空间（半个棋子距离）
+        int offset = (int)(cellSize * 0.2f);
+        marginLeft = MARGIN + offset;
+
+        // 棋盘向上偏移
+        int offsetTop = (int)(cellSize * 0.2f);
+        marginTop = MARGIN - offsetTop;
     }
+
+    // 棋盘左边距（用于偏移棋盘位置）
+    private int marginLeft = MARGIN;
+    // 棋盘上边距（用于向上偏移）
+    private int marginTop = MARGIN;
     
     @Override
     protected void onDraw(Canvas canvas) {
@@ -195,8 +208,27 @@ public class BoardView extends View {
             return;
         }
         
-        // 绘制棋盘背景
-        canvas.drawRect(MARGIN, MARGIN, MARGIN + boardWidth, MARGIN + boardHeight, boardPaint);
+        // 绘制外延背景（橙色）
+        Paint outerPaint = new Paint();
+        outerPaint.setColor(getResources().getColor(android.R.color.holo_orange_light));
+        outerPaint.setStyle(Paint.Style.FILL);
+
+        // 上方外延 - 增加
+        float offset = cellSize * 0.6f;
+        float coordTop = marginTop - offset + cellSize * 0.3f;
+        canvas.drawRect(0, 0, getWidth(), coordTop, outerPaint);
+
+        // 下方外延 - 减少
+        canvas.drawRect(0, MARGIN + boardHeight - cellSize * 0.1f, getWidth(), getHeight(), outerPaint);
+
+        // 左侧外延
+        canvas.drawRect(0, coordTop, marginLeft, MARGIN + boardHeight - cellSize * 0.1f, outerPaint);
+        // 右侧外延
+        canvas.drawRect(marginLeft + boardWidth, coordTop, getWidth(), MARGIN + boardHeight - cellSize * 0.1f, outerPaint);
+
+        // 绘制棋盘背景（木纹色）- 覆盖棋盘和坐标区域
+        canvas.drawRect(marginLeft, coordTop,
+                        marginLeft + boardWidth, MARGIN + boardHeight, boardPaint);
         
         // 绘制棋盘线条
         drawBoardLines(canvas);
@@ -223,14 +255,14 @@ public class BoardView extends View {
     private void drawBoardLines(Canvas canvas) {
         // 绘制横线
         for (int i = 0; i < BOARD_SIZE; i++) {
-            float y = MARGIN + i * cellSize;
-            canvas.drawLine(MARGIN, y, MARGIN + boardWidth, y, linePaint);
+            float y = marginTop + i * cellSize;
+            canvas.drawLine(marginLeft, y, marginLeft + boardWidth, y, linePaint);
         }
-        
+
         // 绘制竖线
         for (int i = 0; i < BOARD_SIZE; i++) {
-            float x = MARGIN + i * cellSize;
-            canvas.drawLine(x, MARGIN, x, MARGIN + boardHeight, linePaint);
+            float x = marginLeft + i * cellSize;
+            canvas.drawLine(x, marginTop, x, marginTop + boardHeight, linePaint);
         }
     }
     
@@ -240,8 +272,8 @@ public class BoardView extends View {
 
         for (int x : starPoints) {
             for (int y : starPoints) {
-                float px = MARGIN + x * cellSize;
-                float py = MARGIN + y * cellSize;
+                float px = marginLeft + x * cellSize;
+                float py = marginTop + y * cellSize;
                 canvas.drawCircle(px, py, STAR_SIZE, starPaint);
             }
         }
@@ -253,39 +285,25 @@ public class BoardView extends View {
         String[] numbers = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19"};
 
         Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        textPaint.setTextSize(cellSize * 0.6f);
+        textPaint.setTextSize(cellSize * 0.5f);
         textPaint.setTextAlign(Paint.Align.CENTER);
 
-        // 绘制顶部字母坐标
+        float offset = cellSize * 0.6f; // 与格子保持半个棋子以上距离
+
+        // 只绘制顶部字母坐标（固定位置，不随棋盘移动）
         for (int i = 0; i < BOARD_SIZE; i++) {
             float x = MARGIN + i * cellSize;
-            float y = MARGIN - cellSize * 0.3f;
+            float y = marginTop - offset;
             textPaint.setColor(Color.BLACK);
             canvas.drawText(letters[i], x, y, textPaint);
         }
 
-        // 绘制左侧数字坐标
+        // 只绘制左侧数字坐标（固定位置，不随棋盘移动）
         for (int i = 0; i < BOARD_SIZE; i++) {
-            float x = MARGIN - cellSize * 0.5f;
-            float y = MARGIN + i * cellSize + cellSize * 0.2f;
+            float x = MARGIN - offset;
+            float y = marginTop + i * cellSize + cellSize * 0.15f;
             textPaint.setColor(Color.BLACK);
             canvas.drawText(numbers[i], x, y, textPaint);
-        }
-
-        // 绘制右侧数字坐标
-        for (int i = 0; i < BOARD_SIZE; i++) {
-            float x = MARGIN + boardWidth + cellSize * 0.5f;
-            float y = MARGIN + i * cellSize + cellSize * 0.2f;
-            textPaint.setColor(Color.BLACK);
-            canvas.drawText(numbers[i], x, y, textPaint);
-        }
-
-        // 绘制底部字母坐标
-        for (int i = 0; i < BOARD_SIZE; i++) {
-            float x = MARGIN + i * cellSize;
-            float y = MARGIN + boardHeight + cellSize * 0.7f;
-            textPaint.setColor(Color.BLACK);
-            canvas.drawText(letters[i], x, y, textPaint);
         }
     }
 
@@ -296,9 +314,9 @@ public class BoardView extends View {
             for (int x = 0; x < BOARD_SIZE; x++) {
                 int stone = boardState[y][x];
                 if (stone != GoBoard.EMPTY) {
-                    float px = MARGIN + x * cellSize;
-                    float py = MARGIN + y * cellSize;
-                    float radius = cellSize / 2 - 2.5f;
+                    float px = marginLeft + x * cellSize;
+                    float py = marginTop + y * cellSize;
+                    float radius = cellSize / 2 - 4f;
 
                     if (stone == GoBoard.BLACK) {
                         // 绘制黑子阴影
@@ -339,8 +357,8 @@ public class BoardView extends View {
     private void drawLastMove(Canvas canvas) {
         GoBoard.Move lastMove = board.getLastMove();
         if (lastMove != null && lastMove.x != -1 && lastMove.y != -1) {
-            float px = MARGIN + lastMove.x * cellSize;
-            float py = MARGIN + lastMove.y * cellSize;
+            float px = marginLeft + lastMove.x * cellSize;
+            float py = marginTop + lastMove.y * cellSize;
             float radius = cellSize / 2;
 
             canvas.drawCircle(px, py, radius, lastMovePaint);
@@ -375,8 +393,8 @@ public class BoardView extends View {
         java.util.List<GoBoard.Position> marks = board.getMarks();
         if (marks != null) {
             for (GoBoard.Position pos : marks) {
-                float px = MARGIN + pos.x * cellSize;
-                float py = MARGIN + pos.y * cellSize;
+                float px = marginLeft + pos.x * cellSize;
+                float py = marginTop + pos.y * cellSize;
                 canvas.drawCircle(px, py, radius, circlePaint);
             }
         }
@@ -385,8 +403,8 @@ public class BoardView extends View {
         java.util.List<GoBoard.Position> crossMarks = board.getCrossMarks();
         if (crossMarks != null) {
             for (GoBoard.Position pos : crossMarks) {
-                float px = MARGIN + pos.x * cellSize;
-                float py = MARGIN + pos.y * cellSize;
+                float px = marginLeft + pos.x * cellSize;
+                float py = marginTop + pos.y * cellSize;
                 float s = markerSize / 2;
                 canvas.drawLine(px - s, py - s, px + s, py + s, crossPaint);
                 canvas.drawLine(px + s, py - s, px - s, py + s, crossPaint);
@@ -397,8 +415,8 @@ public class BoardView extends View {
         java.util.List<GoBoard.Position> squareMarks = board.getSquareMarks();
         if (squareMarks != null) {
             for (GoBoard.Position pos : squareMarks) {
-                float px = MARGIN + pos.x * cellSize;
-                float py = MARGIN + pos.y * cellSize;
+                float px = marginLeft + pos.x * cellSize;
+                float py = marginTop + pos.y * cellSize;
                 float s = markerSize / 2;
                 canvas.drawRect(px - s, py - s, px + s, py + s, squarePaint);
             }
@@ -408,8 +426,8 @@ public class BoardView extends View {
         java.util.List<GoBoard.Position> triangleMarks = board.getTriangleMarks();
         if (triangleMarks != null) {
             for (GoBoard.Position pos : triangleMarks) {
-                float px = MARGIN + pos.x * cellSize;
-                float py = MARGIN + pos.y * cellSize;
+                float px = marginLeft + pos.x * cellSize;
+                float py = marginTop + pos.y * cellSize;
                 float s = markerSize / 2;
                 android.graphics.Path path = new android.graphics.Path();
                 path.moveTo(px, py - s);
@@ -434,9 +452,9 @@ public class BoardView extends View {
                 continue; // 跳过虚手
             }
 
-            float px = MARGIN + move.x * cellSize;
-            float py = MARGIN + move.y * cellSize;
-            float radius = cellSize / 2 - 2.5f;
+            float px = marginLeft + move.x * cellSize;
+            float py = marginTop + move.y * cellSize;
+            float radius = cellSize / 2 - 4f;
             String key = move.x + "," + move.y;
             int branchNumber = i + 1; // 分支编号从1开始
 
@@ -492,8 +510,8 @@ public class BoardView extends View {
             float y = event.getY();
 
             // 转换为棋盘坐标
-            int boardX = (int) ((x - MARGIN + cellSize / 2) / cellSize);
-            int boardY = (int) ((y - MARGIN + cellSize / 2) / cellSize);
+            int boardX = (int) ((x - marginLeft + cellSize / 2) / cellSize);
+            int boardY = (int) ((y - marginTop + cellSize / 2) / cellSize);
 
             // 检查坐标是否在棋盘范围内
             if (boardX >= 0 && boardX < BOARD_SIZE && boardY >= 0 && boardY < BOARD_SIZE) {
@@ -577,18 +595,18 @@ public class BoardView extends View {
     
     // 辅助方法：将屏幕坐标转换为棋盘坐标
     public int[] screenToBoard(float x, float y) {
-        int boardX = (int) ((x - MARGIN + cellSize / 2) / cellSize);
+        int boardX = (int) ((x - marginLeft + cellSize / 2) / cellSize);
         int boardY = (int) ((y - MARGIN + cellSize / 2) / cellSize);
-        
+
         if (boardX >= 0 && boardX < BOARD_SIZE && boardY >= 0 && boardY < BOARD_SIZE) {
             return new int[]{boardX, boardY};
         }
         return null;
     }
-    
+
     // 辅助方法：将棋盘坐标转换为屏幕坐标
     public float[] boardToScreen(int x, int y) {
-        float screenX = MARGIN + x * cellSize;
+        float screenX = marginLeft + x * cellSize;
         float screenY = MARGIN + y * cellSize;
         return new float[]{screenX, screenY};
     }

@@ -11,7 +11,7 @@
     <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1"
+        android:layout_weight="8"
         android:background="@color/board_background"
         android:padding="4dp">
 
@@ -46,7 +46,7 @@
         <ScrollView
             android:id="@+id/commentScrollView"
             android:layout_width="match_parent"
-            android:layout_height="60dp"
+            android:layout_height="100dp"
             android:padding="8dp">
 
             <TextView
@@ -68,7 +68,7 @@
         android:orientation="vertical"
         android:background="@color/surface"
         android:elevation="2dp"
-        android:padding="8dp">
+        android:padding="4dp">
 
         <!-- 工具栏 -->
         <LinearLayout
