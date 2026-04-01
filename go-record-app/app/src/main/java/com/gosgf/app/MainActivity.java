@@ -378,8 +378,30 @@ import java.util.List;
             return;
         }
 
-        // 有分支，先显示分支选择对话框
-        showBranchListDialog(treeNodes, branchPoints);
+        // 检查当前节点是否在分支中
+        GoBoard.SGFNode currentNode = board.getCurrentNode();
+        int currentBranchIndex = -1;
+        for (int i = 0; i < branchPoints.size(); i++) {
+            GoBoard.TreeNodeInfo info = branchPoints.get(i);
+            // 检查当前节点是否是该分支点的子节点（深度更深）
+            GoBoard.SGFNode temp = currentNode;
+            while (temp != null && temp.parent != null) {
+                if (temp.parent == info.node) {
+                    currentBranchIndex = i;
+                    break;
+                }
+                temp = temp.parent;
+            }
+            if (currentBranchIndex >= 0) break;
+        }
+
+        if (currentBranchIndex >= 0) {
+            // 当前在分支中，直接显示该分支后的步数列表
+            showStepListDialog(treeNodes, currentBranchIndex);
+        } else {
+            // 不在分支中，显示分支选择对话框
+            showBranchListDialog(treeNodes, branchPoints);
+        }
     }
 
     /**
@@ -462,6 +484,7 @@ import java.util.List;
         // 构建步数列表
         String[] moveItems = new String[filteredNodes.size()];
         final List<GoBoard.TreeNodeInfo> finalFilteredNodes = filteredNodes;
+        int currentPosition = -1;
 
         for (int i = 0; i < filteredNodes.size(); i++) {
             GoBoard.TreeNodeInfo info = filteredNodes.get(i);
@@ -481,6 +504,7 @@ import java.util.List;
             // 当前节点标记
             if (info.isCurrent) {
                 display.append(" ◀");
+                currentPosition = i;
             }
 
             moveItems[i] = display.toString();
@@ -494,14 +518,20 @@ import java.util.List;
         // 标题
         TextView title = new TextView(this);
         String titleText = "选择步数 (共" + filteredNodes.size() + "步)";
-        if (branchIndex == -1) {
-            titleText = "所有步数 - " + titleText;
+        if (currentPosition >= 0) {
+            titleText += " - 当前第" + (startIndex + currentPosition + 1) + "步";
         }
         title.setText(titleText);
-        title.setTextSize(18);
+        title.setTextSize(16);
         title.setTextColor(0xFF333333);
-        title.setPadding(0, 0, 0, 15);
+        title.setPadding(0, 0, 0, 10);
         layout.addView(title);
+
+        // 定位按钮
+        Button btnGoToCurrent = new Button(this);
+        btnGoToCurrent.setText(currentPosition >= 0 ? "📍 定位当前" : "无当前步");
+        btnGoToCurrent.setEnabled(currentPosition >= 0);
+        layout.addView(btnGoToCurrent);
 
         // 列表视图
         ListView listView = new ListView(this);
@@ -518,6 +548,7 @@ import java.util.List;
 
         // 点击事件
         final int globalOffset = startIndex;
+        final int finalCurrentPosition = currentPosition;
         listView.setOnItemClickListener((parent, view, position, id) -> {
             GoBoard.TreeNodeInfo targetInfo = finalFilteredNodes.get(position);
             boolean success = board.jumpToNode(targetInfo.node);
@@ -526,18 +557,46 @@ import java.util.List;
                 updateCommentDisplay();
                 Toast.makeText(this, "已跳转到第" + (globalOffset + position + 1) + "步", Toast.LENGTH_SHORT).show();
             } else {
-                Toast.makeText(this, "跳转失败", Toast.LENGTH_SHORT).show();
+                Toast.makeText(MainActivity.this, "跳转失败", Toast.LENGTH_SHORT).show();
             }
         });
+
+        // 定位按钮点击事件
+        btnGoToCurrent.setOnClickListener(v -> {
+            if (finalCurrentPosition >= 0) {
+                listView.setSelection(finalCurrentPosition);
+            }
+        });
+
+        // 自动定位到当前步
+        if (finalCurrentPosition >= 0) {
+            listView.post(() -> listView.setSelection(finalCurrentPosition));
+        }
 
         layout.addView(listView);
 
         // 创建对话框
-        AlertDialog.Builder builder = new AlertDialog.Builder(this);
-        builder.setView(layout);
-        builder.setNegativeButton("返回", (d, w) -> showJumpDialog()); // 返回分支选择
-        builder.setPositiveButton("取消", null);
-        builder.show();
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setView(layout)
+                .setNegativeButton("返回", (d, w) -> showJumpDialog())
+                .setPositiveButton("取消", null)
+                .create();
+
+        // 点击事件 - 跳转后关闭对话框
+        listView.setOnItemClickListener((parent, view, position, id) -> {
+            GoBoard.TreeNodeInfo targetInfo = finalFilteredNodes.get(position);
+            boolean success = board.jumpToNode(targetInfo.node);
+            if (success) {
+                boardView.refresh();
+                updateCommentDisplay();
+                Toast.makeText(this, "已跳转到第" + (globalOffset + position + 1) + "步", Toast.LENGTH_SHORT).show();
+                dialog.dismiss(); // 关闭对话框
+            } else {
+                Toast.makeText(MainActivity.this, "跳转失败", Toast.LENGTH_SHORT).show();
+            }
+        });
+
+        dialog.show();
     }
 
     /**
