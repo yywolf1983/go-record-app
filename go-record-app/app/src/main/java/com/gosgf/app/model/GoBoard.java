@@ -920,7 +920,192 @@ public class GoBoard {
     }
 
     public int getCurrentMoveIndex() {
-        return currentMoveIndex;
+        if (gameTreeRoot == null || currentNode == null) {
+            return -1;
+        }
+        return countMovesToNode(gameTreeRoot, currentNode, 0);
+    }
+
+    private int countMovesToNode(SGFNode root, SGFNode target, int count) {
+        if (root == target) {
+            return count;
+        }
+        if (root.move != null) {
+            count++;
+        }
+        for (SGFNode child : root.children) {
+            int result = countMovesToNode(child, target, count);
+            if (result >= 0) {
+                return result;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * 获取当前主路径上的所有步数（不含分支）
+     */
+    public List<Move> getAllMoves() {
+        List<Move> allMoves = new ArrayList<>();
+        if (gameTreeRoot != null) {
+            collectPathMoves(gameTreeRoot, allMoves);
+        }
+        return allMoves;
+    }
+
+    /**
+     * 获取完整树结构（扁平化列表，用于显示）
+     * 返回每个节点的步信息，包含层级和分支信息
+     */
+    public List<TreeNodeInfo> getFullTree() {
+        List<TreeNodeInfo> treeNodes = new ArrayList<>();
+        if (gameTreeRoot != null) {
+            collectFullTree(gameTreeRoot, treeNodes, 0);
+        }
+        return treeNodes;
+    }
+
+    /**
+     * 树节点信息
+     */
+    public static class TreeNodeInfo {
+        public SGFNode node;
+        public int depth; // 层级
+        public boolean hasBranches; // 是否有分支
+        public boolean isCurrent; // 是否是当前位置
+        public int branchIndex; // 在父节点中的索引
+        public int branchCount; // 父节点的子节点数量
+
+        public TreeNodeInfo(SGFNode node, int depth, boolean hasBranches, boolean isCurrent, int branchIndex, int branchCount) {
+            this.node = node;
+            this.depth = depth;
+            this.hasBranches = hasBranches;
+            this.isCurrent = isCurrent;
+            this.branchIndex = branchIndex;
+            this.branchCount = branchCount;
+        }
+    }
+
+    /**
+     * 收集完整树结构
+     */
+    private void collectFullTree(SGFNode node, List<TreeNodeInfo> nodes, int depth) {
+        if (node == null) return;
+
+        // 记录节点信息（如果有move）
+        if (node.move != null && node.move.x >= 0 && node.move.y >= 0) {
+            boolean isCurrent = (node == currentNode);
+            boolean hasBranches = node.children.size() > 1;
+            int branchIndex = (node.parent != null) ? node.parent.children.indexOf(node) : 0;
+            int branchCount = (node.parent != null) ? node.parent.children.size() : 1;
+            nodes.add(new TreeNodeInfo(node, depth, hasBranches, isCurrent, branchIndex, branchCount));
+        }
+
+        // 递归处理所有子节点
+        for (SGFNode child : node.children) {
+            collectFullTree(child, nodes, depth + 1);
+        }
+    }
+
+    /**
+     * 跳转到指定节点
+     */
+    public boolean jumpToNode(SGFNode targetNode) {
+        if (targetNode == null || gameTreeRoot == null) {
+            return false;
+        }
+
+        // 从根节点开始找到目标节点的路径
+        List<SGFNode> path = findPath(gameTreeRoot, targetNode);
+        if (path == null) {
+            return false;
+        }
+
+        // 跳到起始位置
+        resetToStart();
+
+        // 沿着路径前进
+        for (int i = 1; i < path.size(); i++) {
+            SGFNode node = path.get(i);
+            // 找到对应的子节点
+            currentNode = node;
+        }
+        rebuildBoardFromTree();
+        return true;
+    }
+
+    private List<SGFNode> findPath(SGFNode root, SGFNode target) {
+        if (root == target) {
+            List<SGFNode> path = new ArrayList<>();
+            path.add(root);
+            return path;
+        }
+
+        for (SGFNode child : root.children) {
+            List<SGFNode> result = findPath(child, target);
+            if (result != null) {
+                result.add(0, root);
+                return result;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 收集从根节点到当前节点路径上的所有步（不含分支）
+     */
+    private void collectPathMoves(SGFNode node, List<Move> moves) {
+        if (node == null) return;
+
+        // 如果有move，记录它
+        if (node.move != null) {
+            moves.add(node.move);
+        }
+
+        // 如果是当前节点，停止遍历
+        if (node == currentNode) {
+            return;
+        }
+
+        // 继续沿着第一个子节点往下走（主路径）
+        if (!node.children.isEmpty()) {
+            collectPathMoves(node.children.get(0), moves);
+        }
+    }
+
+    /**
+     * 跳转到指定步数（支持向前和向后跳转）
+     * @param moveIndex 步数索引（从0开始）
+     */
+    public boolean jumpToMove(int moveIndex) {
+        List<Move> allMoves = getAllMoves();
+        if (moveIndex < 0 || moveIndex >= allMoves.size()) {
+            return false;
+        }
+
+        int currentIndex = getCurrentMoveIndex();
+        if (currentIndex < 0) currentIndex = -1;
+
+        if (moveIndex == currentIndex) {
+            return true; // 已在目标位置
+        }
+
+        if (moveIndex > currentIndex) {
+            // 向前跳（前进）
+            for (int i = currentIndex + 1; i <= moveIndex; i++) {
+                if (!nextMove()) {
+                    return false;
+                }
+            }
+        } else {
+            // 向后跳（后退）
+            for (int i = currentIndex; i > moveIndex; i--) {
+                if (!previousMove()) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     public Move getLastMove() {
@@ -1517,5 +1702,296 @@ public class GoBoard {
      */
     public String serializeSimple() {
         return serialize();
+    }
+    
+    // ==================== 胜负估算功能 ====================
+    
+    // 死子标记列表（手动标记的死子）
+    private List<Position> deadBlackStones = new ArrayList<>();
+    private List<Position> deadWhiteStones = new ArrayList<>();
+    
+    // 贴目数
+    private float komi = 6.5f;
+    
+    /**
+     * 统计双方棋子数
+     */
+    public int countBlackStones() {
+        int count = 0;
+        for (int y = 0; y < BOARD_SIZE; y++) {
+            for (int x = 0; x < BOARD_SIZE; x++) {
+                if (board[y][x] == BLACK) {
+                    count++;
+                }
+            }
+        }
+        // 减去被标记为死子的黑棋
+        count -= deadBlackStones.size();
+        return Math.max(0, count);
+    }
+    
+    public int countWhiteStones() {
+        int count = 0;
+        for (int y = 0; y < BOARD_SIZE; y++) {
+            for (int x = 0; x < BOARD_SIZE; x++) {
+                if (board[y][x] == WHITE) {
+                    count++;
+                }
+            }
+        }
+        // 减去被标记为死子的白棋
+        count -= deadWhiteStones.size();
+        return Math.max(0, count);
+    }
+    
+    /**
+     * 统计双方围空（基于气和区域填充）
+     */
+    public int countBlackTerritory() {
+        // 统计黑棋围住的空点
+        // 方法：对于每个空点，如果周围都是黑棋或已计入黑空，则是黑空
+        int[][] territory = new int[BOARD_SIZE][BOARD_SIZE];
+        int blackTerritory = 0;
+        
+        boolean[][] visited = new boolean[BOARD_SIZE][BOARD_SIZE];
+        
+        for (int y = 0; y < BOARD_SIZE; y++) {
+            for (int x = 0; x < BOARD_SIZE; x++) {
+                if (board[y][x] == EMPTY && !visited[y][x]) {
+                    // 这是一个空点，进行区域填充判断
+                    List<Position> region = new ArrayList<>();
+                    int owner = getRegionOwner(board, x, y, visited, region);
+                    
+                    if (owner == BLACK) {
+                        blackTerritory += region.size();
+                    }
+                }
+            }
+        }
+        
+        return blackTerritory;
+    }
+    
+    public int countWhiteTerritory() {
+        // 统计白棋围住的空点
+        int[][] territory = new int[BOARD_SIZE][BOARD_SIZE];
+        int whiteTerritory = 0;
+        
+        boolean[][] visited = new boolean[BOARD_SIZE][BOARD_SIZE];
+        
+        for (int y = 0; y < BOARD_SIZE; y++) {
+            for (int x = 0; x < BOARD_SIZE; x++) {
+                if (board[y][x] == EMPTY && !visited[y][x]) {
+                    List<Position> region = new ArrayList<>();
+                    int owner = getRegionOwner(board, x, y, visited, region);
+                    
+                    if (owner == WHITE) {
+                        whiteTerritory += region.size();
+                    }
+                }
+            }
+        }
+        
+        return whiteTerritory;
+    }
+    
+    /**
+     * 获取空区域的归属
+     * @return BLACK, WHITE, 或 0（双方共有）
+     */
+    private int getRegionOwner(int[][] board, int startX, int startY, boolean[][] visited, List<Position> region) {
+        List<Position> queue = new ArrayList<>();
+        queue.add(new Position(startX, startY));
+        visited[startY][startX] = true;
+        region.add(new Position(startX, startY));
+        
+        int blackBorder = 0;
+        int whiteBorder = 0;
+        
+        int head = 0;
+        while (head < queue.size()) {
+            Position pos = queue.get(head++);
+            int x = pos.x;
+            int y = pos.y;
+            
+            // 检查四个方向
+            int[][] directions = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+            for (int[] dir : directions) {
+                int nx = x + dir[0];
+                int ny = y + dir[1];
+                
+                if (nx >= 0 && nx < BOARD_SIZE && ny >= 0 && ny < BOARD_SIZE) {
+                    int stone = board[ny][nx];
+                    if (stone == EMPTY && !visited[ny][nx]) {
+                        visited[ny][nx] = true;
+                        queue.add(new Position(nx, ny));
+                        region.add(new Position(nx, ny));
+                    } else if (stone == BLACK) {
+                        blackBorder++;
+                    } else if (stone == WHITE) {
+                        whiteBorder++;
+                    }
+                }
+            }
+        }
+        
+        if (blackBorder > 0 && whiteBorder == 0) {
+            return BLACK;
+        } else if (whiteBorder > 0 && blackBorder == 0) {
+            return WHITE;
+        } else {
+            return 0; // 双方共有
+        }
+    }
+    
+    /**
+     * 计算胜负结果
+     * @return 负数表示黑棋胜，正数表示白棋胜
+     */
+    public float calculateScore() {
+        int blackStones = countBlackStones();
+        int blackTerritory = countBlackTerritory();
+        int blackTotal = blackStones + blackTerritory;
+        
+        int whiteStones = countWhiteStones();
+        int whiteTerritory = countWhiteTerritory();
+        int whiteTotal = whiteStones + whiteTerritory;
+        
+        // 黑棋减去贴目
+        return blackTotal - (whiteTotal + komi);
+    }
+    
+    /**
+     * 获取胜负估算结果字符串
+     */
+    public String getScoreResult() {
+        int blackStones = countBlackStones();
+        int blackTerritory = countBlackTerritory();
+        int blackTotal = blackStones + blackTerritory;
+        
+        int whiteStones = countWhiteStones();
+        int whiteTerritory = countWhiteTerritory();
+        int whiteTotal = whiteStones + whiteTerritory;
+        
+        float diff = blackTotal - (whiteTotal + komi);
+        
+        StringBuilder sb = new StringBuilder();
+        sb.append("黑棋：").append(blackTotal)
+          .append("子（棋子").append(blackStones)
+          .append(" + 围空").append(blackTerritory).append(")\n");
+        sb.append("白棋：").append(whiteTotal)
+          .append("子（棋子").append(whiteStones)
+          .append(" + 围空").append(whiteTerritory).append("）\n");
+        sb.append("贴目：").append(komi).append("\n");
+        
+        if (diff > 0) {
+            sb.append("黑棋领先 ").append(String.format("%.1f", diff)).append(" 子");
+        } else if (diff < 0) {
+            sb.append("白棋领先 ").append(String.format("%.1f", Math.abs(diff))).append(" 子");
+        } else {
+            sb.append("局势持平");
+        }
+        
+        return sb.toString();
+    }
+    
+    /**
+     * 手动标记黑棋死子
+     */
+    public void addDeadBlackStone(int x, int y) {
+        if (board[y][x] == BLACK && !isDeadStone(deadBlackStones, x, y)) {
+            deadBlackStones.add(new Position(x, y));
+        }
+    }
+    
+    /**
+     * 手动标记白棋死子
+     */
+    public void addDeadWhiteStone(int x, int y) {
+        if (board[y][x] == WHITE && !isDeadStone(deadWhiteStones, x, y)) {
+            deadWhiteStones.add(new Position(x, y));
+        }
+    }
+    
+    /**
+     * 移除死子标记
+     */
+    public void removeDeadStone(int x, int y) {
+        removeFromList(deadBlackStones, x, y);
+        removeFromList(deadWhiteStones, x, y);
+    }
+    
+    /**
+     * 清除所有死子标记
+     */
+    public void clearDeadStones() {
+        deadBlackStones.clear();
+        deadWhiteStones.clear();
+    }
+    
+    /**
+     * 获取死子列表
+     */
+    public List<Position> getDeadBlackStones() {
+        return new ArrayList<>(deadBlackStones);
+    }
+    
+    public List<Position> getDeadWhiteStones() {
+        return new ArrayList<>(deadWhiteStones);
+    }
+    
+    private boolean isDeadStone(List<Position> list, int x, int y) {
+        for (Position pos : list) {
+            if (pos.x == x && pos.y == y) {
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    private void removeFromList(List<Position> list, int x, int y) {
+        Position toRemove = null;
+        for (Position pos : list) {
+            if (pos.x == x && pos.y == y) {
+                toRemove = pos;
+                break;
+            }
+        }
+        if (toRemove != null) {
+            list.remove(toRemove);
+        }
+    }
+    
+    /**
+     * 设置贴目数
+     */
+    public void setKomi(float komi) {
+        this.komi = komi;
+    }
+    
+    public float getKomi() {
+        return komi;
+    }
+    
+    /**
+     * 自动检测死子（基于无气）
+     * 注意：这个方法只能检测明显无气的棋子，不能完全替代人工判断
+     */
+    public List<Position> detectDeadStones(int player) {
+        List<Position> deadStones = new ArrayList<>();
+        int[][] tempBoard = copyBoard(board);
+        
+        for (int y = 0; y < BOARD_SIZE; y++) {
+            for (int x = 0; x < BOARD_SIZE; x++) {
+                if (tempBoard[y][x] == player) {
+                    if (!hasLiberty(tempBoard, x, y, player)) {
+                        // 无气的棋子可能是死子
+                        deadStones.add(new Position(x, y));
+                    }
+                }
+            }
+        }
+        
+        return deadStones;
     }
 }

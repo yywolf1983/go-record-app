@@ -5,11 +5,17 @@ import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.HorizontalScrollView;
+import android.widget.LinearLayout;
+import android.widget.ListView;
+import android.widget.AdapterView;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.widget.ArrayAdapter;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -29,6 +35,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
+import java.util.ArrayList;
 import java.util.List;
 
     public class MainActivity extends AppCompatActivity {
@@ -51,6 +58,7 @@ import java.util.List;
     private Button btnMark;
     private Button btnPlace;
     private Button btnDeleteBranch;
+    private Button btnScore;
 
     // 摆子模式状态
     private boolean isPlaceMode = false;
@@ -192,6 +200,7 @@ import java.util.List;
         btnMark = findViewById(R.id.btn_mark);
         btnPlace = findViewById(R.id.btn_place);
         btnDeleteBranch = findViewById(R.id.btn_delete_branch);
+        btnScore = findViewById(R.id.btn_score);
 
         // 设置点击监听器
         btnNew.setOnClickListener(v -> onNewGame());
@@ -207,6 +216,7 @@ import java.util.List;
         btnMark.setOnClickListener(v -> onMark());
         btnPlace.setOnClickListener(v -> onPlace());
         btnDeleteBranch.setOnClickListener(v -> onDeleteBranch());
+        btnScore.setOnClickListener(v -> onScore());
     }
     
     private void onBoardTouch(int x, int y) {
@@ -340,10 +350,259 @@ import java.util.List;
     }
 
     private void onToStart() {
-        // 跳转到起始状态
-        board.resetToStart();
-        boardView.refresh();
-        updateCommentDisplay();
+        // 显示步数选择对话框
+        showJumpDialog();
+    }
+
+    /**
+     * 显示跳转步数选择对话框 - 两级选择：先选分支，再选步数
+     */
+    private void showJumpDialog() {
+        List<GoBoard.TreeNodeInfo> treeNodes = board.getFullTree();
+        if (treeNodes.isEmpty()) {
+            Toast.makeText(this, "没有要跳转的步数", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        // 查找所有有分支的节点
+        List<GoBoard.TreeNodeInfo> branchPoints = new ArrayList<>();
+        for (GoBoard.TreeNodeInfo info : treeNodes) {
+            if (info.hasBranches) {
+                branchPoints.add(info);
+            }
+        }
+
+        if (branchPoints.isEmpty()) {
+            // 没有分支，直接显示步数列表
+            showStepListDialog(treeNodes, -1);
+            return;
+        }
+
+        // 有分支，先显示分支选择对话框
+        showBranchListDialog(treeNodes, branchPoints);
+    }
+
+    /**
+     * 显示分支选择对话框
+     */
+    private void showBranchListDialog(List<GoBoard.TreeNodeInfo> treeNodes, List<GoBoard.TreeNodeInfo> branchPoints) {
+        // 构建分支列表
+        String[] branchItems = new String[branchPoints.size() + 1]; // +1 for "所有步数" option
+
+        branchItems[0] = "📋 所有步数";
+
+        for (int i = 0; i < branchPoints.size(); i++) {
+            GoBoard.TreeNodeInfo info = branchPoints.get(i);
+            GoBoard.Move move = info.node.move;
+            String coordinate = convertToCoordinate(move.x, move.y);
+            String playerText = move.player == GoBoard.BLACK ? "黑" : "白";
+
+            branchItems[i + 1] = playerText + " " + coordinate
+                    + " [" + info.node.children.size() + "分支]";
+        }
+
+        // 显示分支选择对话框
+        new AlertDialog.Builder(this)
+                .setTitle("选择分支 (" + branchPoints.size() + "处)")
+                .setItems(branchItems, (dialog, which) -> {
+                    if (which == 0) {
+                        // 选择所有步数
+                        showStepListDialog(treeNodes, -1);
+                    } else {
+                        // 选择特定分支点
+                        showStepListDialog(treeNodes, which - 1);
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    /**
+     * 显示步数列表对话框
+     * @param treeNodes 所有节点
+     * @param branchIndex 分支索引，-1表示全部，>=0表示只显示该分支点后的步数
+     */
+    private void showStepListDialog(List<GoBoard.TreeNodeInfo> treeNodes, int branchIndex) {
+        // 过滤节点
+        List<GoBoard.TreeNodeInfo> filteredNodes = new ArrayList<>();
+        int startIndex = 0;
+
+        if (branchIndex >= 0) {
+            // 找到该分支点之后的节点
+            for (int i = 0; i < treeNodes.size(); i++) {
+                GoBoard.TreeNodeInfo info = treeNodes.get(i);
+                if (info.hasBranches) {
+                    // 这是一个分支点
+                    if (branchIndex > 0) {
+                        branchIndex--;
+                        continue;
+                    }
+                    if (branchIndex == 0) {
+                        startIndex = i;
+                        branchIndex = -2; // 标记已找到
+                        // 添加这个分支点本身
+                        filteredNodes.add(info);
+                        continue;
+                    }
+                }
+                if (branchIndex == -2) {
+                    filteredNodes.add(info);
+                }
+            }
+        } else {
+            // 全部节点
+            filteredNodes = new ArrayList<>(treeNodes);
+        }
+
+        if (filteredNodes.isEmpty()) {
+            Toast.makeText(this, "该分支没有步数", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        // 构建步数列表
+        String[] moveItems = new String[filteredNodes.size()];
+        final List<GoBoard.TreeNodeInfo> finalFilteredNodes = filteredNodes;
+
+        for (int i = 0; i < filteredNodes.size(); i++) {
+            GoBoard.TreeNodeInfo info = filteredNodes.get(i);
+            GoBoard.Move move = info.node.move;
+            String coordinate = convertToCoordinate(move.x, move.y);
+            String playerText = move.player == GoBoard.BLACK ? "黑" : "白";
+
+            StringBuilder display = new StringBuilder();
+            display.append(i + 1).append(". ");
+            display.append(playerText).append(" ").append(coordinate);
+
+            // 显示分支数
+            if (info.hasBranches) {
+                display.append(" [").append(info.node.children.size()).append("分支]");
+            }
+
+            // 当前节点标记
+            if (info.isCurrent) {
+                display.append(" ◀");
+            }
+
+            moveItems[i] = display.toString();
+        }
+
+        // 创建布局
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setPadding(20, 20, 20, 20);
+
+        // 标题
+        TextView title = new TextView(this);
+        String titleText = "选择步数 (共" + filteredNodes.size() + "步)";
+        if (branchIndex == -1) {
+            titleText = "所有步数 - " + titleText;
+        }
+        title.setText(titleText);
+        title.setTextSize(18);
+        title.setTextColor(0xFF333333);
+        title.setPadding(0, 0, 0, 15);
+        layout.addView(title);
+
+        // 列表视图
+        ListView listView = new ListView(this);
+        LinearLayout.LayoutParams listParams = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f);
+        listView.setLayoutParams(listParams);
+        listView.setScrollingCacheEnabled(false);
+        listView.setDividerHeight(1);
+
+        // 设置适配器
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
+            android.R.layout.simple_list_item_1, moveItems);
+        listView.setAdapter(adapter);
+
+        // 点击事件
+        final int globalOffset = startIndex;
+        listView.setOnItemClickListener((parent, view, position, id) -> {
+            GoBoard.TreeNodeInfo targetInfo = finalFilteredNodes.get(position);
+            boolean success = board.jumpToNode(targetInfo.node);
+            if (success) {
+                boardView.refresh();
+                updateCommentDisplay();
+                Toast.makeText(this, "已跳转到第" + (globalOffset + position + 1) + "步", Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(this, "跳转失败", Toast.LENGTH_SHORT).show();
+            }
+        });
+
+        layout.addView(listView);
+
+        // 创建对话框
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setView(layout);
+        builder.setNegativeButton("返回", (d, w) -> showJumpDialog()); // 返回分支选择
+        builder.setPositiveButton("取消", null);
+        builder.show();
+    }
+
+    /**
+     * 构建树状前缀
+     */
+    private String buildTreePrefix(List<GoBoard.TreeNodeInfo> nodes, int currentIndex) {
+        GoBoard.TreeNodeInfo current = nodes.get(currentIndex);
+
+        if (current.depth == 0) {
+            return "";
+        }
+
+        // 找到所有祖先节点
+        StringBuilder prefix = new StringBuilder();
+        int depth = current.depth;
+
+        // 从根到当前节点的前一个深度，构建前缀
+        for (int d = 0; d < depth - 1; d++) {
+            // 找到当前深度的最后一个节点
+            int lastIndexAtDepth = -1;
+            for (int i = 0; i < currentIndex; i++) {
+                if (nodes.get(i).depth == d) {
+                    lastIndexAtDepth = i;
+                }
+            }
+
+            if (lastIndexAtDepth >= 0) {
+                GoBoard.TreeNodeInfo nodeAtDepth = nodes.get(lastIndexAtDepth);
+                // 检查这个节点后面是否还有同级的兄弟
+                boolean hasNextSibling = false;
+                for (int i = lastIndexAtDepth + 1; i < currentIndex; i++) {
+                    if (nodes.get(i).depth == d) {
+                        hasNextSibling = true;
+                        break;
+                    }
+                }
+
+                if (hasNextSibling) {
+                    prefix.append("│ ");
+                } else {
+                    prefix.append("  ");
+                }
+            }
+        }
+
+        // 当前层级的连接符
+        // 检查是否是最后一个子节点
+        boolean isLast = true;
+        for (int i = currentIndex + 1; i < nodes.size(); i++) {
+            if (nodes.get(i).depth == current.depth) {
+                isLast = false;
+                break;
+            }
+            if (nodes.get(i).depth < current.depth) {
+                break;
+            }
+        }
+
+        if (isLast) {
+            prefix.append("└─");
+        } else {
+            prefix.append("├─");
+        }
+
+        return prefix.toString();
     }
 
     private void onPrevious() {
@@ -542,7 +801,54 @@ import java.util.List;
             Toast.makeText(this, "获取分支列表时出错: " + e.getMessage(), Toast.LENGTH_SHORT).show();
         }
     }
-    
+
+    /**
+     * 估算当前局面胜负
+     */
+    private void onScore() {
+        // 获取胜负估算结果
+        String scoreResult = board.getScoreResult();
+        
+        // 显示估算结果对话框
+        new AlertDialog.Builder(this)
+            .setTitle("胜负估算")
+            .setMessage(scoreResult)
+            .setPositiveButton("标记死子", (dialog, which) -> {
+                // 弹出子力选择对话框
+                showDeadStoneDialog();
+            })
+            .setNegativeButton("关闭", null)
+            .setNeutralButton("清除标记", (dialog, which) -> {
+                board.clearDeadStones();
+                Toast.makeText(this, "已清除死子标记", Toast.LENGTH_SHORT).show();
+                boardView.refresh();
+            })
+            .show();
+    }
+
+    /**
+     * 显示标记死子对话框
+     */
+    private void showDeadStoneDialog() {
+        String[] options = {"标记黑棋死子", "标记白棋死子"};
+        
+        new AlertDialog.Builder(this)
+            .setTitle("选择标记")
+            .setItems(options, (dialog, which) -> {
+                if (which == 0) {
+                    // 标记黑棋死子
+                    Toast.makeText(this, "点击黑棋标记为死子", Toast.LENGTH_SHORT).show();
+                    boardView.setDeadStoneMarkMode(true, GoBoard.BLACK);
+                } else {
+                    // 标记白棋死子
+                    Toast.makeText(this, "点击白棋标记为死子", Toast.LENGTH_SHORT).show();
+                    boardView.setDeadStoneMarkMode(true, GoBoard.WHITE);
+                }
+            })
+            .setNegativeButton("取消", null)
+            .show();
+    }
+
 
     
     private void loadFile(Uri uri) {

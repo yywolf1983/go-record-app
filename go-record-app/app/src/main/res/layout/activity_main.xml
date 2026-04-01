@@ -102,6 +102,14 @@
                 android:text="@string/action_save"
                 android:layout_marginHorizontal="4dp" />
 
+            <Button
+                android:id="@+id/btn_score"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="估算"
+                android:layout_marginHorizontal="4dp" />
+
         </LinearLayout>
 
         <!-- 导航栏 -->
@@ -117,7 +125,7 @@
                 android:layout_width="0dp"
                 android:layout_height="40dp"
                 android:layout_weight="1"
-                android:text="@string/action_to_start"
+                android:text="跳转"
                 android:layout_marginHorizontal="4dp"
                 android:textColor="@color/white"
                 android:textSize="14sp"

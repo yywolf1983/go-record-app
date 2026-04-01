@@ -8,8 +8,10 @@ import android.graphics.RectF;
 import android.util.AttributeSet;
 import android.view.MotionEvent;
 import android.view.View;
+import android.widget.Toast;
 
 import com.gosgf.app.model.GoBoard;
+import com.gosgf.app.model.GoBoard.Position;
 
 public class BoardView extends View {
     private static final int BOARD_SIZE = 19;
@@ -41,6 +43,10 @@ public class BoardView extends View {
 
     // 标记模式
     private boolean isMarkMode = false;
+
+    // 死子标记模式
+    private boolean isDeadStoneMarkMode = false;
+    private int deadStonePlayer = 0; // 标记死子的玩家
 
     // 虚影位置缓存
     private java.util.Map<String, GoBoard.Move> branchPositions;
@@ -434,6 +440,41 @@ public class BoardView extends View {
                 canvas.drawPath(path, trianglePaint);
             }
         }
+
+        // 绘制死子标记（X形状）
+        java.util.List<GoBoard.Position> deadBlackStones = board.getDeadBlackStones();
+        java.util.List<GoBoard.Position> deadWhiteStones = board.getDeadWhiteStones();
+
+        Paint deadStonePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        deadStonePaint.setColor(Color.RED);
+        deadStonePaint.setStyle(Paint.Style.STROKE);
+        deadStonePaint.setStrokeWidth(4);
+
+        float deadMarkerSize = cellSize / 2.5f;
+
+        // 绘制黑棋死子标记
+        if (deadBlackStones != null) {
+            for (GoBoard.Position pos : deadBlackStones) {
+                float px = marginLeft + pos.x * cellSize;
+                float py = marginTop + pos.y * cellSize;
+                float s = deadMarkerSize;
+                // 绘制X形状
+                canvas.drawLine(px - s, py - s, px + s, py + s, deadStonePaint);
+                canvas.drawLine(px + s, py - s, px - s, py + s, deadStonePaint);
+            }
+        }
+
+        // 绘制白棋死子标记
+        if (deadWhiteStones != null) {
+            for (GoBoard.Position pos : deadWhiteStones) {
+                float px = marginLeft + pos.x * cellSize;
+                float py = marginTop + pos.y * cellSize;
+                float s = deadMarkerSize;
+                // 绘制X形状
+                canvas.drawLine(px - s, py - s, px + s, py + s, deadStonePaint);
+                canvas.drawLine(px + s, py - s, px - s, py + s, deadStonePaint);
+            }
+        }
     }
 
     private void drawBranchStones(Canvas canvas) {
@@ -563,6 +604,50 @@ public class BoardView extends View {
                     return true;
                 }
 
+                // 如果在死子标记模式下
+                if (isDeadStoneMarkMode) {
+                    int currentStone = board.getBoard()[boardY][boardX];
+                    if (currentStone != GoBoard.EMPTY) {
+                        // 检查点击的棋子是否匹配要标记的玩家
+                        if ((deadStonePlayer == GoBoard.BLACK && currentStone == GoBoard.BLACK) ||
+                            (deadStonePlayer == GoBoard.WHITE && currentStone == GoBoard.WHITE)) {
+                            // 检查是否已经有死子标记
+                            boolean hasDeadMark = false;
+                            for (Position pos : board.getDeadBlackStones()) {
+                                if (pos.x == boardX && pos.y == boardY) {
+                                    hasDeadMark = true;
+                                    break;
+                                }
+                            }
+                            if (!hasDeadMark) {
+                                for (Position pos : board.getDeadWhiteStones()) {
+                                    if (pos.x == boardX && pos.y == boardY) {
+                                        hasDeadMark = true;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if (hasDeadMark) {
+                                // 移除死子标记
+                                board.removeDeadStone(boardX, boardY);
+                                Toast.makeText(getContext(), "已移除死子标记", Toast.LENGTH_SHORT).show();
+                            } else {
+                                // 添加死子标记
+                                if (deadStonePlayer == GoBoard.BLACK) {
+                                    board.addDeadBlackStone(boardX, boardY);
+                                    Toast.makeText(getContext(), "已标记黑棋死子", Toast.LENGTH_SHORT).show();
+                                } else {
+                                    board.addDeadWhiteStone(boardX, boardY);
+                                    Toast.makeText(getContext(), "已标记白棋死子", Toast.LENGTH_SHORT).show();
+                                }
+                            }
+                            refresh();
+                        }
+                    }
+                    return true;
+                }
+
                 // 如果点击的不是分支虚影，直接落子（创建新分支）
                 // 无论是否有其他分支，都允许用户创建新分支
                 if (touchListener != null) {
@@ -616,6 +701,22 @@ public class BoardView extends View {
     // 获取摆子模式状态
     public boolean isPlaceMode() {
         return isPlaceMode;
+    }
+
+    // 设置死子标记模式
+    public void setDeadStoneMarkMode(boolean enabled, int player) {
+        this.isDeadStoneMarkMode = enabled;
+        this.deadStonePlayer = player;
+        if (enabled) {
+            // 关闭其他模式
+            isPlaceMode = false;
+            isMarkMode = false;
+        }
+    }
+
+    // 获取死子标记模式状态
+    public boolean isDeadStoneMarkMode() {
+        return isDeadStoneMarkMode;
     }
 
     // 重绘棋盘
