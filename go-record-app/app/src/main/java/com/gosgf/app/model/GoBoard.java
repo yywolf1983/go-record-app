@@ -213,6 +213,7 @@ public class GoBoard {
 
         if (BoardLogic.hasLiberty(tempBoard, x, y, currentPlayer)) {
             board = tempBoard;
+            handicapMgr.setBoard(board);
             Move move = new Move(x, y, currentPlayer, capturedStones);
             moveHistory.add(move);
             lastMove = move;
@@ -270,6 +271,7 @@ public class GoBoard {
 
         if (BoardLogic.hasLiberty(tempBoard, x, y, currentPlayer)) {
             board = tempBoard;
+            handicapMgr.setBoard(board);
             Move move = new Move(x, y, currentPlayer, capturedStones);
             moveHistory.add(move);
             lastMove = move;
