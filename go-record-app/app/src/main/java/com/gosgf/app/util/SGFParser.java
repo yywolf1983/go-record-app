@@ -6,12 +6,14 @@ import java.util.List;
 import java.util.Map;
 
 public class SGFParser {
+    // 实例指针，用于 JNI 全局变量替代方案
+    private long nativeHandle;
+
     static {
         try {
             System.loadLibrary("gosgf");
         } catch (UnsatisfiedLinkError e) {
             // 本地库加载失败，使用 Java 实现
-            System.out.println("Local library not found, using Java implementation");
         }
     }
     
@@ -22,6 +24,8 @@ public class SGFParser {
     private static native String[] nativeGetChildProperties(int childIndex);
     private static native int nativeGetChildChildrenCount(int childIndex);
     private static native void nativeFreeResources();
+    private native long nativeInit();
+    private native void nativeDestroy();
     public static class SGFParseException extends Exception {
         public SGFParseException(String message) {
             super(message);
@@ -130,17 +134,10 @@ public class SGFParser {
         }
         
         // 调试：打印解析结果
-        System.out.println("=== SGF 解析完成 ===");
-        System.out.println("Root properties: " + root.properties.keySet());
-        System.out.println("Root children count: " + root.children.size());
         if (root.children.size() > 0) {
-            System.out.println("First child properties: " + root.children.get(0).properties.keySet());
-            System.out.println("First child children count: " + root.children.get(0).children.size());
             if (root.children.get(0).children.size() > 0) {
-                System.out.println("Second child properties: " + root.children.get(0).children.get(0).properties.keySet());
             }
         }
-        System.out.println("=====================");
         
         return root;
     }
@@ -186,7 +183,6 @@ public class SGFParser {
 
         Node currentNode = null;  // 当前序列的最后一个节点
 
-        System.out.println("=== 开始解析游戏树，父节点已有 " + parent.children.size() + " 个子节点，isRoot=" + isRoot + " ===");
 
         while (index < content.length()) {
             char c = content.charAt(index);
@@ -201,19 +197,16 @@ public class SGFParser {
                     // 最外层的第一个节点是root本身
                     node = parent;
                     currentNode = node;
-                    System.out.println("最外层第一个节点作为root本身");
                 } else if (currentNode == null) {
                     // 序列的第一个节点（非root的情况）
                     node = new Node();
                     parent.children.add(node);
                     currentNode = node;
-                    System.out.println("序列第一个节点，添加到父节点，父节点现在有 " + parent.children.size() + " 个子节点");
                 } else {
                     // 后续节点，添加到currentNode
                     node = new Node();
                     currentNode.children.add(node);
                     currentNode = node;
-                    System.out.println("添加节点到currentNode");
                 }
 
                 // 解析节点属性
@@ -232,8 +225,6 @@ public class SGFParser {
                 // 如果currentNode为null（序列为空），则从parent开始
                 Node branchParent = (currentNode != null) ? currentNode : parent;
 
-                System.out.println("开始解析子游戏树，从 " +
-                        (currentNode != null ? "序列最后一个节点" : "父节点") + " 开始");
 
                 // 递归解析子游戏树（不是root）
                 index = parseTree(content, index, branchParent, false);
@@ -242,7 +233,6 @@ public class SGFParser {
                 // 结束当前游戏树
                 index++;
                 int childCount = (currentNode != null) ? currentNode.children.size() : 0;
-                System.out.println("遇到 ')': 结束当前游戏树");
                 return index;
 
             } else if (Character.isWhitespace(c)) {
@@ -254,9 +244,6 @@ public class SGFParser {
             }
         }
 
-        System.out.println("=== 游戏树解析完成 ===");
-        System.out.println("父节点最终有 " + parent.children.size() + " 个子节点");
-        System.out.println("=====================");
         return index;
     }
     
