@@ -132,6 +132,7 @@ public class GoBoard {
     // ==================== 核心字段 ====================
     private int[][] board;
     private int currentPlayer;
+    private int firstPlayer = BLACK; // 先手方（默认黑先），用于重建棋盘时正确计算当前玩家
     private List<Move> moveHistory;
     private Stack<List<Move>> variations;
     private Move lastMove;
@@ -158,6 +159,7 @@ public class GoBoard {
     private void initializeBoard() {
         board = new int[BOARD_SIZE][BOARD_SIZE];
         currentPlayer = BLACK;
+        firstPlayer = BLACK;
         moveHistory = new ArrayList<>();
         variations = new Stack<>();
         currentMoveIndex = -1;
@@ -182,7 +184,8 @@ public class GoBoard {
         initializeBoard();
         gameTree.setRoot(new SGFNode(null));
         handicapMgr.applyHandicapStones();
-        currentPlayer = (handicapMgr.getHandicap() > 0) ? WHITE : BLACK;
+        firstPlayer = (handicapMgr.getHandicap() > 0) ? WHITE : BLACK;
+        currentPlayer = firstPlayer;
     }
 
     // ==================== 核心落子逻辑 ====================
@@ -369,9 +372,8 @@ public class GoBoard {
         }
 
         moveHistory.clear();
-        int savedCurrentPlayer = currentPlayer;
-        currentPlayer = BLACK;
-        if (handicapMgr.getHandicap() > 0) currentPlayer = WHITE;
+        // 使用 firstPlayer 确定先手方，而非仅靠 handicap
+        currentPlayer = firstPlayer;
 
         String savedErrorMessage = lastErrorMessage;
         lastErrorMessage = "";
@@ -386,24 +388,22 @@ public class GoBoard {
                     moveHistory.add(pathNode.move);
                     switchPlayer();
                 }
+            } else if (pathNode.move != null && pathNode.move.x == -1 && pathNode.move.y == -1) {
+                // 处理虚手（pass）
+                currentPlayer = pathNode.move.player;
+                Move passMove = new Move(-1, -1, currentPlayer);
+                moveHistory.add(passMove);
+                lastMove = passMove;
+                currentMoveIndex = moveHistory.size() - 1;
+                koMove = null;
+                switchPlayer();
             }
         }
 
-        currentPlayer = savedCurrentPlayer;
         lastErrorMessage = savedErrorMessage;
         currentMoveIndex = moveHistory.size() - 1;
         lastMove = moveHistory.isEmpty() ? null : moveHistory.get(currentMoveIndex);
         koMove = null;
-
-        int actualMoveCount = 0;
-        for (Move m : moveHistory) {
-            if (m.x != -1 && m.y != -1) actualMoveCount++;
-        }
-        if (handicapMgr.getHandicap() > 0) {
-            currentPlayer = (actualMoveCount % 2 == 0) ? WHITE : BLACK;
-        } else {
-            currentPlayer = (actualMoveCount % 2 == 0) ? BLACK : WHITE;
-        }
     }
 
     /**
@@ -451,6 +451,10 @@ public class GoBoard {
 
     public void setCurrentPlayer(int player) {
         if (player == BLACK || player == WHITE) this.currentPlayer = player;
+    }
+    public int getFirstPlayer() { return firstPlayer; }
+    public void setFirstPlayer(int player) {
+        if (player == BLACK || player == WHITE) this.firstPlayer = player;
     }
     public void clearMoveHistory() {
         moveHistory.clear();
@@ -565,7 +569,7 @@ public class GoBoard {
             resetBoard();
             applyHandicapStones();
             lastMove = null;
-            currentPlayer = (handicapMgr.getHandicap() > 0) ? WHITE : BLACK;
+            currentPlayer = firstPlayer;
             koMove = null;
         }
     }

@@ -34,6 +34,7 @@ public class SGFConverter {
     private static final String PROP_BLACK_MOVE = "B";
     private static final String PROP_WHITE_MOVE = "W";
     private static final String PROP_COMMENT = "C";
+    private static final String PROP_PLAYER_TO_MOVE = "PL";
     private static final String PROP_CIRCLE = "CR";
     private static final String PROP_CROSS = "MA";
     private static final String PROP_SQUARE = "SQ";
@@ -68,6 +69,11 @@ public class SGFConverter {
         int handicap = board.getHandicap();
         if (handicap > 0) {
             root.addProperty(PROP_HANDICAP, String.valueOf(handicap));
+        }
+
+        // 添加先手方信息（如果不是默认的黑先）
+        if (board.getFirstPlayer() == GoBoard.WHITE) {
+            root.addProperty(PROP_PLAYER_TO_MOVE, "W");
         }
 
         // 添加座子信息（AB/AW属性）
@@ -263,6 +269,11 @@ public class SGFConverter {
 
             System.out.println("游戏树构建完成");
 
+            // 如果没有 PL 属性，检查第一个走子的颜色来确定先手方
+            if (!root.properties.containsKey(PROP_PLAYER_TO_MOVE)) {
+                detectFirstPlayerFromTree(board, gameTree);
+            }
+
             // 使用新的统一接口设置游戏树
             board.setGameTreeRoot(gameTree);
 
@@ -303,6 +314,21 @@ public class SGFConverter {
         return node;
     }
     
+    /**
+     * 从游戏树中检测先手方
+     * 如果第一个走子是白棋，则设置先手方为白棋
+     */
+    private static void detectFirstPlayerFromTree(GoBoard board, GoBoard.SGFNode treeRoot) {
+        if (treeRoot == null || treeRoot.children.isEmpty()) {
+            return;
+        }
+        // 检查第一个子节点的走子颜色
+        GoBoard.SGFNode firstChild = treeRoot.children.get(0);
+        if (firstChild.move != null && firstChild.move.player == GoBoard.WHITE) {
+            board.setFirstPlayer(GoBoard.WHITE);
+        }
+    }
+
     // 从节点获取走子
     private static GoBoard.Move getMoveFromNode(SGFParser.Node node) {
         if (node == null) {
@@ -355,9 +381,21 @@ public class SGFConverter {
                 board.setHandicap(handicap);
                 if (handicap > 0) {
                     board.setupHandicap(handicap);
+                    // 有让子时，默认白方先手
+                    board.setFirstPlayer(GoBoard.WHITE);
                 }
             } catch (NumberFormatException e) {
                 // 忽略无效的让子数
+            }
+        }
+
+        // 加载先手方信息 (PL属性) - 优先级高于让子设置
+        if (node.properties.containsKey(PROP_PLAYER_TO_MOVE)) {
+            String pl = node.properties.get(PROP_PLAYER_TO_MOVE).get(0);
+            if ("W".equalsIgnoreCase(pl)) {
+                board.setFirstPlayer(GoBoard.WHITE);
+            } else if ("B".equalsIgnoreCase(pl)) {
+                board.setFirstPlayer(GoBoard.BLACK);
             }
         }
 
