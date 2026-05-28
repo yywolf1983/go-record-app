@@ -15,8 +15,8 @@ import com.gosgf.app.model.GoBoard.Position;
 
 public class BoardView extends View {
     private static final int BOARD_SIZE = 19;
-    private static final int MARGIN = 40;
-    private static final int STAR_SIZE = 8;
+    private static final int MARGIN = 45;
+    private static final int STAR_SIZE = 6; // 星位点大小，适当减小
     
     private GoBoard board;
     private float cellSize;
@@ -185,20 +185,16 @@ public class BoardView extends View {
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
 
-        // 使用实际可用尺寸，确保棋盘完全显示
         int size = Math.min(w, h);
-        // 调整边距，确保坐标完整显示
-        int margin = Math.max(MARGIN, Math.min(w, h) / 40);
+        int margin = Math.max(MARGIN, Math.min(w, h) / 35);
         boardWidth = size - 2 * margin;
         boardHeight = size - 2 * margin;
         cellSize = boardWidth / (BOARD_SIZE - 1);
 
-        // 棋盘整体向右偏移，给左侧坐标留出空间
-        int offset = (int)(cellSize * 0.2f);
+        int offset = (int)(cellSize * 0.25f);
         marginLeft = margin + offset;
 
-        // 棋盘向下偏移，给顶部坐标留出空间
-        int offsetTop = (int)(cellSize * 0.1f);
+        int offsetTop = (int)(cellSize * 0.5f);
         marginTop = margin + offsetTop;
     }
 
@@ -293,7 +289,7 @@ public class BoardView extends View {
         textPaint.setTextAlign(Paint.Align.CENTER);
         textPaint.setColor(Color.BLACK);
 
-        float offset = cellSize * 0.5f; // 调整偏移，确保坐标完整显示
+        float offset = cellSize * 0.6f; // 进一步增大偏移，确保顶部坐标完整显示
 
         // 只绘制顶部字母坐标（固定位置，不随棋盘移动）
         for (int i = 0; i < BOARD_SIZE; i++) {
@@ -304,8 +300,8 @@ public class BoardView extends View {
 
         // 只绘制左侧数字坐标（固定位置，不随棋盘移动）
         for (int i = 0; i < BOARD_SIZE; i++) {
-            float x = marginLeft - offset - cellSize * 0.15f;
-            float y = marginTop + i * cellSize + cellSize * 0.15f;
+            float x = marginLeft - offset - cellSize * 0.2f;
+            float y = marginTop + i * cellSize + cellSize * 0.2f;
             canvas.drawText(numbers[i], x, y, textPaint);
         }
     }
@@ -319,7 +315,7 @@ public class BoardView extends View {
                 if (stone != GoBoard.EMPTY) {
                     float px = marginLeft + x * cellSize;
                     float py = marginTop + y * cellSize;
-                    float radius = cellSize / 2 - 0.5f; // 棋子半径，稍微留点间隙
+                    float radius = cellSize / 2 - 0.2f; // 增大棋子半径，几乎填满格子
 
                     if (stone == GoBoard.BLACK) {
                         // 绘制黑子阴影
@@ -492,7 +488,7 @@ public class BoardView extends View {
 
             float px = marginLeft + move.x * cellSize;
             float py = marginTop + move.y * cellSize;
-            float radius = cellSize / 2 - 1f; // 分支虚影半径，稍小于正常棋子
+            float radius = cellSize / 2 - 0.5f; // 增大分支虚影半径
             String key = move.x + "," + move.y;
             int branchNumber = i + 1; // 分支编号从1开始
 
