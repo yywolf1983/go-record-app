@@ -48,6 +48,9 @@ public class BoardView extends View {
     private boolean isDeadStoneMarkMode = false;
     private int deadStonePlayer = 0; // 标记死子的玩家
 
+    // 领地估算模式
+    private boolean isTerritoryMode = false;
+
     // 虚影位置缓存
     private java.util.Map<String, GoBoard.Move> branchPositions;
     private java.util.Set<String> selectedBranchPositions; // 已选择的分支位置
@@ -169,6 +172,17 @@ public class BoardView extends View {
         selectedBranchPositions.add(positionKey);
         invalidate();
     }
+
+    // 设置领地估算模式
+    public void setTerritoryMode(boolean enabled) {
+        this.isTerritoryMode = enabled;
+        invalidate();
+    }
+
+    // 获取领地估算模式状态
+    public boolean isTerritoryMode() {
+        return isTerritoryMode;
+    }
     
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
@@ -238,6 +252,11 @@ public class BoardView extends View {
 
         // 绘制棋子
         drawStones(canvas);
+
+        // 绘制领地估算（在棋子之后，标记之前）
+        if (isTerritoryMode) {
+            drawTerritory(canvas);
+        }
 
         // 绘制分支虚影
         drawBranchStones(canvas);
@@ -469,6 +488,74 @@ public class BoardView extends View {
                 // 绘制X形状
                 canvas.drawLine(px - s, py - s, px + s, py + s, deadStonePaint);
                 canvas.drawLine(px + s, py - s, px - s, py + s, deadStonePaint);
+            }
+        }
+    }
+
+    private void drawTerritory(Canvas canvas) {
+        float territoryDotSize = cellSize / 4;
+        float potentialDotSize = cellSize / 5;
+
+        Paint blackTerritoryPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        blackTerritoryPaint.setColor(Color.BLACK);
+        blackTerritoryPaint.setStyle(Paint.Style.FILL);
+        blackTerritoryPaint.setAlpha(150);
+
+        Paint whiteTerritoryPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        whiteTerritoryPaint.setColor(Color.WHITE);
+        whiteTerritoryPaint.setStyle(Paint.Style.FILL);
+        whiteTerritoryPaint.setAlpha(150);
+
+        Paint whiteBorderPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        whiteBorderPaint.setColor(0xFF5D4037);
+        whiteBorderPaint.setStyle(Paint.Style.STROKE);
+        whiteBorderPaint.setStrokeWidth(1);
+
+        Paint blackPotentialPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        blackPotentialPaint.setColor(Color.BLACK);
+        blackPotentialPaint.setStyle(Paint.Style.FILL);
+        blackPotentialPaint.setAlpha(80);
+
+        Paint whitePotentialPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        whitePotentialPaint.setColor(Color.WHITE);
+        whitePotentialPaint.setStyle(Paint.Style.FILL);
+        whitePotentialPaint.setAlpha(80);
+
+        java.util.List<GoBoard.Position> blackTerritory = board.getBlackTerritoryPositions();
+        if (blackTerritory != null) {
+            for (GoBoard.Position pos : blackTerritory) {
+                float px = marginLeft + pos.x * cellSize;
+                float py = marginTop + pos.y * cellSize;
+                canvas.drawCircle(px, py, territoryDotSize, blackTerritoryPaint);
+            }
+        }
+
+        java.util.List<GoBoard.Position> whiteTerritory = board.getWhiteTerritoryPositions();
+        if (whiteTerritory != null) {
+            for (GoBoard.Position pos : whiteTerritory) {
+                float px = marginLeft + pos.x * cellSize;
+                float py = marginTop + pos.y * cellSize;
+                canvas.drawCircle(px, py, territoryDotSize, whiteTerritoryPaint);
+                canvas.drawCircle(px, py, territoryDotSize, whiteBorderPaint);
+            }
+        }
+
+        java.util.List<GoBoard.Position> blackPotential = board.getBlackPotentialPositions();
+        if (blackPotential != null) {
+            for (GoBoard.Position pos : blackPotential) {
+                float px = marginLeft + pos.x * cellSize;
+                float py = marginTop + pos.y * cellSize;
+                canvas.drawCircle(px, py, potentialDotSize, blackPotentialPaint);
+            }
+        }
+
+        java.util.List<GoBoard.Position> whitePotential = board.getWhitePotentialPositions();
+        if (whitePotential != null) {
+            for (GoBoard.Position pos : whitePotential) {
+                float px = marginLeft + pos.x * cellSize;
+                float py = marginTop + pos.y * cellSize;
+                canvas.drawCircle(px, py, potentialDotSize, whitePotentialPaint);
+                canvas.drawCircle(px, py, potentialDotSize, whiteBorderPaint);
             }
         }
     }

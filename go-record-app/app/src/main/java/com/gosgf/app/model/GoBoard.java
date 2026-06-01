@@ -632,6 +632,8 @@ public class GoBoard {
     private void ensureScoreEstimator() {
         if (scoreEstimator == null) {
             scoreEstimator = new ScoreEstimator(board);
+        } else {
+            scoreEstimator.setBoard(board);
         }
     }
 
@@ -653,6 +655,11 @@ public class GoBoard {
 
     public void setKomi(float komi) { ensureScoreEstimator(); scoreEstimator.setKomi(komi); }
     public float getKomi() { ensureScoreEstimator(); return scoreEstimator.getKomi(); }
+
+    public List<Position> getBlackTerritoryPositions() { ensureScoreEstimator(); return scoreEstimator.getBlackTerritoryPositions(); }
+    public List<Position> getWhiteTerritoryPositions() { ensureScoreEstimator(); return scoreEstimator.getWhiteTerritoryPositions(); }
+    public List<Position> getBlackPotentialPositions() { ensureScoreEstimator(); return scoreEstimator.getBlackPotentialPositions(); }
+    public List<Position> getWhitePotentialPositions() { ensureScoreEstimator(); return scoreEstimator.getWhitePotentialPositions(); }
 
     // ==================== BoardSerializer 委托 ====================
 

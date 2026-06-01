@@ -220,12 +220,12 @@ import java.util.List;
     }
     
     private void onBoardTouch(int x, int y) {
+        boardView.setTerritoryMode(false);
         boolean success = board.placeStone(x, y);
         if (success) {
             boardView.refresh();
             updateCommentDisplay();
         } else {
-            // 显示错误提示
             String errorMessage = board.getLastErrorMessage();
             if (errorMessage != null && !errorMessage.isEmpty()) {
                 Toast.makeText(this, errorMessage, Toast.LENGTH_SHORT).show();
@@ -665,7 +665,7 @@ import java.util.List;
     }
 
     private void onPrevious() {
-        // 上一步
+        boardView.setTerritoryMode(false);
         boolean success = board.previousMove();
         if (success) {
             boardView.refresh();
@@ -674,7 +674,7 @@ import java.util.List;
     }
 
     private void onNext() {
-        // 下一步
+        boardView.setTerritoryMode(false);
         boolean success = board.nextMove();
         if (success) {
             boardView.refresh();
@@ -683,7 +683,7 @@ import java.util.List;
     }
 
     private void onPass() {
-        // 虚手
+        boardView.setTerritoryMode(false);
         board.placeStone(-1, -1);
         boardView.refresh();
         updateCommentDisplay();
@@ -788,8 +788,7 @@ import java.util.List;
     }
     
     private void onUndo() {
-        System.out.println("onUndo 被点击");
-        // 悔棋
+        boardView.setTerritoryMode(false);
         board.undo();
         boardView.refresh();
         updateCommentDisplay();
@@ -865,15 +864,14 @@ import java.util.List;
      * 估算当前局面胜负
      */
     private void onScore() {
-        // 获取胜负估算结果
+        boardView.setTerritoryMode(true);
+        
         String scoreResult = board.getScoreResult();
         
-        // 显示估算结果对话框
         new AlertDialog.Builder(this)
             .setTitle("胜负估算")
             .setMessage(scoreResult)
             .setPositiveButton("标记死子", (dialog, which) -> {
-                // 弹出子力选择对话框
                 showDeadStoneDialog();
             })
             .setNegativeButton("关闭", null)
