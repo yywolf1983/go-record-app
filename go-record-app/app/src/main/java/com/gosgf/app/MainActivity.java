@@ -254,7 +254,7 @@ import java.util.List;
         int currentIndex = board.getCurrentMoveIndex();
         int totalMoves = board.getMoveHistory().size();
         String player = board.getCurrentPlayer() == GoBoard.BLACK ? "黑方" : "白方";
-        moveCountText.setText("步数: " + (currentIndex + 1) + " " + player);
+        moveCountText.setText("步数: " + currentIndex + " " + player);
 
         // 更新注释显示
         String comment = board.getCurrentComment();
@@ -408,7 +408,7 @@ import java.util.List;
                 if (success) {
                     boardView.refresh();
                     updateCommentDisplay();
-                    int stepNum = board.countMovesToNode(item.node) + 1;
+                    int stepNum = board.countMovesToNode(item.node);
                     Toast.makeText(this, "已跳转到第" + stepNum + "步", Toast.LENGTH_SHORT).show();
                     dialog.dismiss();
                 } else {
@@ -492,7 +492,7 @@ import java.util.List;
         if (cache.containsKey(node)) {
             return cache.get(node);
         }
-        int stepNum = board.countMovesToNode(node) + 1;
+        int stepNum = board.countMovesToNode(node);
         cache.put(node, stepNum);
         return stepNum;
     }

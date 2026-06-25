@@ -82,7 +82,7 @@ public class GameInfoView extends LinearLayout {
                 System.out.println("displayedMoveIndex=" + displayedMoveIndex + " → " + currentPlayerText);
             }
 
-            String displayText = "步数: " + (currentIndex + 1) + currentPlayerText;
+            String displayText = "步数: " + currentIndex + currentPlayerText;
             System.out.println("设置文本: " + displayText);
             moveCountTextView.setText(displayText);
         } catch (Exception e) {
