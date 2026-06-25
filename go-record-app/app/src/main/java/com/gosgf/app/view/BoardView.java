@@ -558,6 +558,40 @@ public class BoardView extends View {
                 canvas.drawCircle(px, py, potentialDotSize, whiteBorderPaint);
             }
         }
+
+        Paint blackInfluencePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        blackInfluencePaint.setColor(Color.BLACK);
+        blackInfluencePaint.setStyle(Paint.Style.FILL);
+        blackInfluencePaint.setAlpha(120);
+
+        Paint whiteInfluencePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        whiteInfluencePaint.setColor(Color.WHITE);
+        whiteInfluencePaint.setStyle(Paint.Style.FILL);
+        whiteInfluencePaint.setAlpha(120);
+
+        Paint whiteInfluenceBorderPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        whiteInfluenceBorderPaint.setColor(0xFF5D4037);
+        whiteInfluenceBorderPaint.setStyle(Paint.Style.STROKE);
+        whiteInfluenceBorderPaint.setStrokeWidth(1);
+
+        java.util.List<GoBoard.Position> blackInfluence = board.getBlackInfluencePositions();
+        if (blackInfluence != null) {
+            for (GoBoard.Position pos : blackInfluence) {
+                float px = marginLeft + pos.x * cellSize;
+                float py = marginTop + pos.y * cellSize;
+                canvas.drawCircle(px, py, territoryDotSize, blackInfluencePaint);
+            }
+        }
+
+        java.util.List<GoBoard.Position> whiteInfluence = board.getWhiteInfluencePositions();
+        if (whiteInfluence != null) {
+            for (GoBoard.Position pos : whiteInfluence) {
+                float px = marginLeft + pos.x * cellSize;
+                float py = marginTop + pos.y * cellSize;
+                canvas.drawCircle(px, py, territoryDotSize, whiteInfluencePaint);
+                canvas.drawCircle(px, py, territoryDotSize, whiteInfluenceBorderPaint);
+            }
+        }
     }
 
     private void drawBranchStones(Canvas canvas) {

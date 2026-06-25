@@ -185,9 +185,10 @@ public class GameTree {
 
     private int countMovesRecursive(GoBoard.SGFNode node, GoBoard.SGFNode target, int count) {
         if (node == target) return count;
-        if (node.move != null) count++;
         for (GoBoard.SGFNode child : node.children) {
-            int result = countMovesRecursive(child, target, count);
+            int nextCount = count;
+            if (child.move != null) nextCount++;
+            int result = countMovesRecursive(child, target, nextCount);
             if (result >= 0) return result;
         }
         return -1;

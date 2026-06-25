@@ -603,6 +603,11 @@ public class GoBoard {
         return gameTree.countMovesToNode(gameTree.getCurrentNode());
     }
 
+    public int countMovesToNode(SGFNode node) {
+        if (!gameTree.hasTree() || node == null) return -1;
+        return gameTree.countMovesToNode(node);
+    }
+
     public List<SGFNode> findPath(SGFNode from, SGFNode to) {
         return gameTree.findPath(from, to);
     }
@@ -660,6 +665,21 @@ public class GoBoard {
     public List<Position> getWhiteTerritoryPositions() { ensureScoreEstimator(); return scoreEstimator.getWhiteTerritoryPositions(); }
     public List<Position> getBlackPotentialPositions() { ensureScoreEstimator(); return scoreEstimator.getBlackPotentialPositions(); }
     public List<Position> getWhitePotentialPositions() { ensureScoreEstimator(); return scoreEstimator.getWhitePotentialPositions(); }
+
+    public float getEstimatedScoreDifference() { ensureScoreEstimator(); return scoreEstimator.getEstimatedScoreDifference(); }
+    public float getEstimatedBlackScore() { ensureScoreEstimator(); return scoreEstimator.getEstimatedBlackScore(); }
+    public float getEstimatedWhiteScore() { ensureScoreEstimator(); return scoreEstimator.getEstimatedWhiteScore(); }
+    public String getEstimatedScoreResult() { ensureScoreEstimator(); return scoreEstimator.getEstimatedScoreResult(); }
+    public List<Position> getEstimatedDeadBlackStones() { ensureScoreEstimator(); return scoreEstimator.getEstimatedDeadBlackStones(); }
+    public List<Position> getEstimatedDeadWhiteStones() { ensureScoreEstimator(); return scoreEstimator.getEstimatedDeadWhiteStones(); }
+
+    public float getBlackInfluenceValue() { ensureScoreEstimator(); return scoreEstimator.getBlackInfluenceValue(); }
+    public float getWhiteInfluenceValue() { ensureScoreEstimator(); return scoreEstimator.getWhiteInfluenceValue(); }
+    public List<Position> getBlackInfluencePositions() { ensureScoreEstimator(); return scoreEstimator.getBlackInfluencePositions(); }
+    public List<Position> getWhiteInfluencePositions() { ensureScoreEstimator(); return scoreEstimator.getWhiteInfluencePositions(); }
+    public float getInfluenceAt(int x, int y) { ensureScoreEstimator(); return scoreEstimator.getInfluenceAt(x, y); }
+    public float getEstimatedScoreDifferenceWithInfluence() { ensureScoreEstimator(); return scoreEstimator.getEstimatedScoreDifferenceWithInfluence(); }
+    public String getEstimatedScoreResultWithInfluence() { ensureScoreEstimator(); return scoreEstimator.getEstimatedScoreResultWithInfluence(); }
 
     // ==================== BoardSerializer 委托 ====================
 

@@ -16,6 +16,9 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.ArrayAdapter;
+import android.widget.ImageView;
+import android.widget.BaseAdapter;
+import android.graphics.Typeface;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -355,7 +358,7 @@ import java.util.List;
     }
 
     /**
-     * 显示跳转步数选择对话框 - 两级选择：先选分支，再选步数
+     * 显示跳转对话框 - 可折叠分支结构
      */
     private void showJumpDialog() {
         List<GoBoard.TreeNodeInfo> treeNodes = board.getFullTree();
@@ -364,176 +367,20 @@ import java.util.List;
             return;
         }
 
-        // 查找所有有分支的节点
-        List<GoBoard.TreeNodeInfo> branchPoints = new ArrayList<>();
-        for (GoBoard.TreeNodeInfo info : treeNodes) {
-            if (info.hasBranches) {
-                branchPoints.add(info);
-            }
-        }
-
-        if (branchPoints.isEmpty()) {
-            // 没有分支，直接显示步数列表
-            showStepListDialog(treeNodes, -1);
-            return;
-        }
-
-        // 检查当前节点是否在分支中
-        GoBoard.SGFNode currentNode = board.getCurrentNode();
-        int currentBranchIndex = -1;
-        for (int i = 0; i < branchPoints.size(); i++) {
-            GoBoard.TreeNodeInfo info = branchPoints.get(i);
-            // 检查当前节点是否是该分支点的子节点（深度更深）
-            GoBoard.SGFNode temp = currentNode;
-            while (temp != null && temp.parent != null) {
-                if (temp.parent == info.node) {
-                    currentBranchIndex = i;
-                    break;
-                }
-                temp = temp.parent;
-            }
-            if (currentBranchIndex >= 0) break;
-        }
-
-        if (currentBranchIndex >= 0) {
-            // 当前在分支中，直接显示该分支后的步数列表
-            showStepListDialog(treeNodes, currentBranchIndex);
-        } else {
-            // 不在分支中，显示分支选择对话框
-            showBranchListDialog(treeNodes, branchPoints);
-        }
-    }
-
-    /**
-     * 显示分支选择对话框
-     */
-    private void showBranchListDialog(List<GoBoard.TreeNodeInfo> treeNodes, List<GoBoard.TreeNodeInfo> branchPoints) {
-        // 构建分支列表
-        String[] branchItems = new String[branchPoints.size() + 1]; // +1 for "所有步数" option
-
-        branchItems[0] = "📋 所有步数";
-
-        for (int i = 0; i < branchPoints.size(); i++) {
-            GoBoard.TreeNodeInfo info = branchPoints.get(i);
-            GoBoard.Move move = info.node.move;
-            String coordinate = convertToCoordinate(move.x, move.y);
-            String playerText = move.player == GoBoard.BLACK ? "黑" : "白";
-
-            branchItems[i + 1] = playerText + " " + coordinate
-                    + " [" + info.node.children.size() + "分支]";
-        }
-
-        // 显示分支选择对话框
-        new AlertDialog.Builder(this)
-                .setTitle("选择分支 (" + branchPoints.size() + "处)")
-                .setItems(branchItems, (dialog, which) -> {
-                    if (which == 0) {
-                        // 选择所有步数
-                        showStepListDialog(treeNodes, -1);
-                    } else {
-                        // 选择特定分支点
-                        showStepListDialog(treeNodes, which - 1);
-                    }
-                })
-                .setNegativeButton("取消", null)
-                .show();
-    }
-
-    /**
-     * 显示步数列表对话框
-     * @param treeNodes 所有节点
-     * @param branchIndex 分支索引，-1表示全部，>=0表示只显示该分支点后的步数
-     */
-    private void showStepListDialog(List<GoBoard.TreeNodeInfo> treeNodes, int branchIndex) {
-        // 过滤节点
-        List<GoBoard.TreeNodeInfo> filteredNodes = new ArrayList<>();
-        int startIndex = 0;
-
-        if (branchIndex >= 0) {
-            // 找到该分支点之后的节点
-            for (int i = 0; i < treeNodes.size(); i++) {
-                GoBoard.TreeNodeInfo info = treeNodes.get(i);
-                if (info.hasBranches) {
-                    // 这是一个分支点
-                    if (branchIndex > 0) {
-                        branchIndex--;
-                        continue;
-                    }
-                    if (branchIndex == 0) {
-                        startIndex = i;
-                        branchIndex = -2; // 标记已找到
-                        // 添加这个分支点本身
-                        filteredNodes.add(info);
-                        continue;
-                    }
-                }
-                if (branchIndex == -2) {
-                    filteredNodes.add(info);
-                }
-            }
-        } else {
-            // 全部节点
-            filteredNodes = new ArrayList<>(treeNodes);
-        }
-
-        if (filteredNodes.isEmpty()) {
-            Toast.makeText(this, "该分支没有步数", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
-        // 构建步数列表
-        String[] moveItems = new String[filteredNodes.size()];
-        final List<GoBoard.TreeNodeInfo> finalFilteredNodes = filteredNodes;
-        int currentPosition = -1;
-
-        for (int i = 0; i < filteredNodes.size(); i++) {
-            GoBoard.TreeNodeInfo info = filteredNodes.get(i);
-            GoBoard.Move move = info.node.move;
-            String coordinate = convertToCoordinate(move.x, move.y);
-            String playerText = move.player == GoBoard.BLACK ? "黑" : "白";
-
-            StringBuilder display = new StringBuilder();
-            display.append(i + 1).append(". ");
-            display.append(playerText).append(" ").append(coordinate);
-
-            // 显示分支数
-            if (info.hasBranches) {
-                display.append(" [").append(info.node.children.size()).append("分支]");
-            }
-
-            // 当前节点标记
-            if (info.isCurrent) {
-                display.append(" ◀");
-                currentPosition = i;
-            }
-
-            moveItems[i] = display.toString();
-        }
-
-        // 创建布局
+        List<BranchItem> branchItems = buildBranchTree(treeNodes);
+        
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
-        layout.setPadding(20, 20, 20, 20);
+        layout.setPadding(10, 10, 10, 10);
 
-        // 标题
         TextView title = new TextView(this);
-        String titleText = "选择步数 (共" + filteredNodes.size() + "步)";
-        if (currentPosition >= 0) {
-            titleText += " - 当前第" + (startIndex + currentPosition + 1) + "步";
-        }
-        title.setText(titleText);
-        title.setTextSize(16);
+        title.setText("跳转选择");
+        title.setTextSize(18);
         title.setTextColor(0xFF333333);
-        title.setPadding(0, 0, 0, 10);
+        title.setPadding(10, 10, 10, 15);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
         layout.addView(title);
 
-        // 定位按钮
-        Button btnGoToCurrent = new Button(this);
-        btnGoToCurrent.setText(currentPosition >= 0 ? "📍 定位当前" : "无当前步");
-        btnGoToCurrent.setEnabled(currentPosition >= 0);
-        layout.addView(btnGoToCurrent);
-
-        // 列表视图
         ListView listView = new ListView(this);
         LinearLayout.LayoutParams listParams = new LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f);
@@ -541,62 +388,235 @@ import java.util.List;
         listView.setScrollingCacheEnabled(false);
         listView.setDividerHeight(1);
 
-        // 设置适配器
-        ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
-            android.R.layout.simple_list_item_1, moveItems);
+        BranchListAdapter adapter = new BranchListAdapter(this, branchItems);
         listView.setAdapter(adapter);
 
-        // 点击事件
-        final int globalOffset = startIndex;
-        final int finalCurrentPosition = currentPosition;
-        listView.setOnItemClickListener((parent, view, position, id) -> {
-            GoBoard.TreeNodeInfo targetInfo = finalFilteredNodes.get(position);
-            boolean success = board.jumpToNode(targetInfo.node);
-            if (success) {
-                boardView.refresh();
-                updateCommentDisplay();
-                Toast.makeText(this, "已跳转到第" + (globalOffset + position + 1) + "步", Toast.LENGTH_SHORT).show();
-            } else {
-                Toast.makeText(MainActivity.this, "跳转失败", Toast.LENGTH_SHORT).show();
-            }
-        });
-
-        // 定位按钮点击事件
-        btnGoToCurrent.setOnClickListener(v -> {
-            if (finalCurrentPosition >= 0) {
-                listView.setSelection(finalCurrentPosition);
-            }
-        });
-
-        // 自动定位到当前步
-        if (finalCurrentPosition >= 0) {
-            listView.post(() -> listView.setSelection(finalCurrentPosition));
-        }
-
-        layout.addView(listView);
-
-        // 创建对话框
-        AlertDialog dialog = new AlertDialog.Builder(this)
+        final AlertDialog dialog = new AlertDialog.Builder(this)
                 .setView(layout)
-                .setNegativeButton("返回", (d, w) -> showJumpDialog())
                 .setPositiveButton("取消", null)
                 .create();
 
-        // 点击事件 - 跳转后关闭对话框
         listView.setOnItemClickListener((parent, view, position, id) -> {
-            GoBoard.TreeNodeInfo targetInfo = finalFilteredNodes.get(position);
-            boolean success = board.jumpToNode(targetInfo.node);
-            if (success) {
-                boardView.refresh();
-                updateCommentDisplay();
-                Toast.makeText(this, "已跳转到第" + (globalOffset + position + 1) + "步", Toast.LENGTH_SHORT).show();
-                dialog.dismiss(); // 关闭对话框
-            } else {
-                Toast.makeText(MainActivity.this, "跳转失败", Toast.LENGTH_SHORT).show();
+            BranchItem item = adapter.getItem(position);
+            if (item == null) return;
+
+            if (item.isBranchPoint) {
+                item.isExpanded = !item.isExpanded;
+                adapter.notifyDataSetChanged();
+            } else if (item.node != null) {
+                boolean success = board.jumpToNode(item.node);
+                if (success) {
+                    boardView.refresh();
+                    updateCommentDisplay();
+                    int stepNum = board.countMovesToNode(item.node) + 1;
+                    Toast.makeText(this, "已跳转到第" + stepNum + "步", Toast.LENGTH_SHORT).show();
+                    dialog.dismiss();
+                } else {
+                    Toast.makeText(MainActivity.this, "跳转失败", Toast.LENGTH_SHORT).show();
+                }
             }
         });
 
+        layout.addView(listView);
         dialog.show();
+    }
+
+    private List<BranchItem> buildBranchTree(List<GoBoard.TreeNodeInfo> treeNodes) {
+        List<BranchItem> items = new ArrayList<>();
+        GoBoard.SGFNode currentNode = board.getCurrentNode();
+        
+        for (GoBoard.TreeNodeInfo info : treeNodes) {
+            int stepNum = board.countMovesToNode(info.node) + 1;
+            String coordinate = convertToCoordinate(info.node.move.x, info.node.move.y);
+            String player = info.node.move.player == GoBoard.BLACK ? "黑" : "白";
+            boolean isCurrent = (info.node == currentNode);
+            boolean hasBranches = info.node.children.size() > 1;
+
+            if (hasBranches) {
+                BranchItem branchPoint = new BranchItem();
+                branchPoint.isBranchPoint = true;
+                branchPoint.stepNum = stepNum;
+                branchPoint.player = player;
+                branchPoint.coordinate = coordinate;
+                branchPoint.branchCount = info.node.children.size();
+                branchPoint.isExpanded = true;
+                branchPoint.isCurrent = isCurrent;
+                branchPoint.node = info.node;
+                items.add(branchPoint);
+
+                for (int i = 0; i < info.node.children.size(); i++) {
+                    GoBoard.SGFNode child = info.node.children.get(i);
+                    if (child.move != null) {
+                        String childCoord = convertToCoordinate(child.move.x, child.move.y);
+                        String childPlayer = child.move.player == GoBoard.BLACK ? "黑" : "白";
+                        int childStepNum = stepNum + 1;
+
+                        BranchItem childItem = new BranchItem();
+                        childItem.isBranchPoint = false;
+                        childItem.stepNum = childStepNum;
+                        childItem.player = childPlayer;
+                        childItem.coordinate = childCoord;
+                        childItem.node = child;
+                        childItem.isCurrent = (child == currentNode);
+                        childItem.isBranchChild = true;
+                        childItem.branchIndex = i + 1;
+                        childItem.branchTotal = info.node.children.size();
+                        items.add(childItem);
+                    }
+                }
+            } else {
+                BranchItem moveItem = new BranchItem();
+                moveItem.isBranchPoint = false;
+                moveItem.stepNum = stepNum;
+                moveItem.player = player;
+                moveItem.coordinate = coordinate;
+                moveItem.node = info.node;
+                moveItem.isCurrent = isCurrent;
+                moveItem.isBranchChild = (info.branchCount > 1);
+                moveItem.branchIndex = info.branchIndex + 1;
+                moveItem.branchTotal = info.branchCount;
+                items.add(moveItem);
+            }
+        }
+
+        return items;
+    }
+
+    private static class BranchItem {
+        boolean isBranchPoint;
+        int stepNum;
+        String player;
+        String coordinate;
+        int branchCount;
+        boolean isExpanded;
+        boolean isCurrent;
+        GoBoard.SGFNode node;
+        boolean isBranchChild;
+        int branchIndex;
+        int branchTotal;
+    }
+
+    private class BranchListAdapter extends BaseAdapter {
+        private Context context;
+        private List<BranchItem> items;
+
+        BranchListAdapter(Context context, List<BranchItem> items) {
+            this.context = context;
+            this.items = items;
+        }
+
+        @Override
+        public int getCount() {
+            int count = 0;
+            for (BranchItem item : items) {
+                if (item.isBranchPoint && !item.isExpanded) {
+                    count++;
+                } else {
+                    count++;
+                }
+            }
+            return count;
+        }
+
+        @Override
+        public BranchItem getItem(int position) {
+            int index = 0;
+            for (BranchItem item : items) {
+                if (item.isBranchPoint && !item.isExpanded) {
+                    if (index == position) return item;
+                    index++;
+                } else {
+                    if (index == position) return item;
+                    index++;
+                }
+            }
+            return null;
+        }
+
+        @Override
+        public long getItemId(int position) {
+            return position;
+        }
+
+        @Override
+        public View getView(int position, View convertView, ViewGroup parent) {
+            BranchItem item = getItem(position);
+            if (item == null) return new View(context);
+
+            LinearLayout layout = new LinearLayout(context);
+            layout.setOrientation(LinearLayout.HORIZONTAL);
+
+            if (item.isBranchPoint) {
+                layout.setBackgroundColor(0xFFF0F8FF);
+                
+                TextView arrow = new TextView(context);
+                arrow.setText(item.isExpanded ? "▼" : "▶");
+                arrow.setTextSize(14);
+                arrow.setTextColor(0xFF0066CC);
+                arrow.setPadding(5, 10, 10, 10);
+                layout.addView(arrow);
+
+                TextView info = new TextView(context);
+                info.setText("🔀 " + item.stepNum + ". " + item.player + " " + item.coordinate + " (" + item.branchCount + "分支)");
+                info.setTextSize(14);
+                info.setTextColor(0xFF0066CC);
+                info.setPadding(0, 10, 10, 10);
+                info.setTypeface(Typeface.DEFAULT_BOLD);
+                layout.addView(info);
+
+                if (item.isCurrent) {
+                    TextView current = new TextView(context);
+                    current.setText("●当前");
+                    current.setTextSize(12);
+                    current.setTextColor(0xFF00CC00);
+                    current.setPadding(8, 0, 0, 0);
+                    layout.addView(current);
+                }
+            } else {
+                int paddingLeft = item.isBranchChild ? 30 : 10;
+                layout.setPadding(paddingLeft, 8, 10, 8);
+
+                if (item.isBranchChild) {
+                    TextView branchTag = new TextView(context);
+                    branchTag.setText("[" + item.branchIndex + "/" + item.branchTotal + "]");
+                    branchTag.setTextSize(12);
+                    branchTag.setTextColor(0xFFFF9900);
+                    branchTag.setPadding(0, 0, 8, 0);
+                    layout.addView(branchTag);
+                }
+
+                TextView stepView = new TextView(context);
+                stepView.setText(String.valueOf(item.stepNum) + ".");
+                stepView.setTextSize(14);
+                stepView.setTextColor(0xFF333333);
+                stepView.setPadding(0, 0, 8, 0);
+                stepView.setTypeface(Typeface.DEFAULT_BOLD);
+                layout.addView(stepView);
+
+                TextView playerView = new TextView(context);
+                playerView.setText(item.player);
+                playerView.setTextSize(15);
+                playerView.setTextColor(item.player.equals("黑") ? 0xFF000000 : 0xFF666666);
+                playerView.setPadding(0, 0, 6, 0);
+                layout.addView(playerView);
+
+                TextView coordView = new TextView(context);
+                coordView.setText(item.coordinate);
+                coordView.setTextSize(15);
+                coordView.setTextColor(0xFF333333);
+                layout.addView(coordView);
+
+                if (item.isCurrent) {
+                    TextView current = new TextView(context);
+                    current.setText(" ●当前");
+                    current.setTextSize(12);
+                    current.setTextColor(0xFF00CC00);
+                    layout.addView(current);
+                }
+            }
+
+            return layout;
+        }
     }
 
     /**
