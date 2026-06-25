@@ -425,14 +425,15 @@ import java.util.List;
         List<BranchItem> items = new ArrayList<>();
         GoBoard.SGFNode currentNode = board.getCurrentNode();
         
+        java.util.Map<GoBoard.SGFNode, Integer> stepCache = new java.util.HashMap<>();
+        
         for (GoBoard.TreeNodeInfo info : treeNodes) {
-            int stepNum = board.countMovesToNode(info.node) + 1;
+            int stepNum = getStepNumCached(info.node, stepCache);
             String coordinate = convertToCoordinate(info.node.move.x, info.node.move.y);
             String player = info.node.move.player == GoBoard.BLACK ? "黑" : "白";
             boolean isCurrent = (info.node == currentNode);
-            boolean hasBranches = info.node.children.size() > 1;
 
-            if (hasBranches) {
+            if (info.hasBranches) {
                 BranchItem branchPoint = new BranchItem();
                 branchPoint.isBranchPoint = true;
                 branchPoint.stepNum = stepNum;
@@ -449,11 +450,10 @@ import java.util.List;
                     if (child.move != null) {
                         String childCoord = convertToCoordinate(child.move.x, child.move.y);
                         String childPlayer = child.move.player == GoBoard.BLACK ? "黑" : "白";
-                        int childStepNum = stepNum + 1;
 
                         BranchItem childItem = new BranchItem();
                         childItem.isBranchPoint = false;
-                        childItem.stepNum = childStepNum;
+                        childItem.stepNum = stepNum + 1;
                         childItem.player = childPlayer;
                         childItem.coordinate = childCoord;
                         childItem.node = child;
@@ -480,6 +480,15 @@ import java.util.List;
         }
 
         return items;
+    }
+
+    private int getStepNumCached(GoBoard.SGFNode node, java.util.Map<GoBoard.SGFNode, Integer> cache) {
+        if (cache.containsKey(node)) {
+            return cache.get(node);
+        }
+        int stepNum = board.countMovesToNode(node) + 1;
+        cache.put(node, stepNum);
+        return stepNum;
     }
 
     private static class BranchItem {
@@ -557,7 +566,7 @@ import java.util.List;
                 layout.addView(arrow);
 
                 TextView info = new TextView(context);
-                info.setText("🔀 " + item.stepNum + ". " + item.player + " " + item.coordinate + " (" + item.branchCount + "分支)");
+                info.setText("🔀 " + item.stepNum + " " + item.player + " " + item.coordinate + " (" + item.branchCount + "分支)");
                 info.setTextSize(14);
                 info.setTextColor(0xFF0066CC);
                 info.setPadding(0, 10, 10, 10);
@@ -586,7 +595,7 @@ import java.util.List;
                 }
 
                 TextView stepView = new TextView(context);
-                stepView.setText(String.valueOf(item.stepNum) + ".");
+                stepView.setText(String.valueOf(item.stepNum));
                 stepView.setTextSize(14);
                 stepView.setTextColor(0xFF333333);
                 stepView.setPadding(0, 0, 8, 0);
