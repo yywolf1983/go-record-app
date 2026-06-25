@@ -465,6 +465,8 @@ import java.util.List;
                         childItem.branchTotal = info.node.children.size();
                         items.add(childItem);
                         addedNodes.add(child);
+
+                        addBranchDescendants(child, stepNum + 1, items, addedNodes, currentNode, i + 1, info.node.children.size());
                     }
                 }
             } else if (!addedNodes.contains(info.node)) {
@@ -493,6 +495,32 @@ import java.util.List;
         int stepNum = board.countMovesToNode(node) + 1;
         cache.put(node, stepNum);
         return stepNum;
+    }
+
+    private void addBranchDescendants(GoBoard.SGFNode node, int stepNum, List<BranchItem> items,
+                                      java.util.Set<GoBoard.SGFNode> addedNodes, GoBoard.SGFNode currentNode,
+                                      int branchIndex, int branchTotal) {
+        for (GoBoard.SGFNode child : node.children) {
+            if (child.move != null) {
+                String childCoord = convertToCoordinate(child.move.x, child.move.y);
+                String childPlayer = child.move.player == GoBoard.BLACK ? "黑" : "白";
+
+                BranchItem childItem = new BranchItem();
+                childItem.isBranchPoint = false;
+                childItem.stepNum = stepNum + 1;
+                childItem.player = childPlayer;
+                childItem.coordinate = childCoord;
+                childItem.node = child;
+                childItem.isCurrent = (child == currentNode);
+                childItem.isBranchChild = true;
+                childItem.branchIndex = branchIndex;
+                childItem.branchTotal = branchTotal;
+                items.add(childItem);
+                addedNodes.add(child);
+
+                addBranchDescendants(child, stepNum + 1, items, addedNodes, currentNode, branchIndex, branchTotal);
+            }
+        }
     }
 
     private static class BranchItem {
@@ -945,7 +973,6 @@ import java.util.List;
         // 显示文件路径
         String filePath = uri.toString();
         String fileName = uri.getLastPathSegment();
-        Toast.makeText(this, "正在加载文件：" + fileName, Toast.LENGTH_LONG).show();
         
         // 检查权限
         InputStream inputStream = null;
