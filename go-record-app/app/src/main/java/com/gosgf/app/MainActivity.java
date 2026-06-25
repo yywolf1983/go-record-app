@@ -254,7 +254,7 @@ import java.util.List;
         int currentIndex = board.getCurrentMoveIndex();
         int totalMoves = board.getMoveHistory().size();
         String player = board.getCurrentPlayer() == GoBoard.BLACK ? "黑方" : "白方";
-        moveCountText.setText("步数: " + (currentIndex + 1) + " / " + totalMoves + " " + player);
+        moveCountText.setText("步数: " + (currentIndex + 1) + " " + player);
 
         // 更新注释显示
         String comment = board.getCurrentComment();
@@ -425,6 +425,7 @@ import java.util.List;
         List<BranchItem> items = new ArrayList<>();
         GoBoard.SGFNode currentNode = board.getCurrentNode();
         
+        java.util.Set<GoBoard.SGFNode> addedNodes = new java.util.HashSet<>();
         java.util.Map<GoBoard.SGFNode, Integer> stepCache = new java.util.HashMap<>();
         
         for (GoBoard.TreeNodeInfo info : treeNodes) {
@@ -444,6 +445,7 @@ import java.util.List;
                 branchPoint.isCurrent = isCurrent;
                 branchPoint.node = info.node;
                 items.add(branchPoint);
+                addedNodes.add(info.node);
 
                 for (int i = 0; i < info.node.children.size(); i++) {
                     GoBoard.SGFNode child = info.node.children.get(i);
@@ -462,9 +464,10 @@ import java.util.List;
                         childItem.branchIndex = i + 1;
                         childItem.branchTotal = info.node.children.size();
                         items.add(childItem);
+                        addedNodes.add(child);
                     }
                 }
-            } else {
+            } else if (!addedNodes.contains(info.node)) {
                 BranchItem moveItem = new BranchItem();
                 moveItem.isBranchPoint = false;
                 moveItem.stepNum = stepNum;
@@ -476,6 +479,7 @@ import java.util.List;
                 moveItem.branchIndex = info.branchIndex + 1;
                 moveItem.branchTotal = info.branchCount;
                 items.add(moveItem);
+                addedNodes.add(info.node);
             }
         }
 
