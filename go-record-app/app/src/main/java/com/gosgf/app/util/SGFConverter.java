@@ -67,9 +67,7 @@ public class SGFConverter {
 
         // 添加让子信息
         int handicap = board.getHandicap();
-        if (handicap > 0) {
-            root.addProperty(PROP_HANDICAP, String.valueOf(handicap));
-        }
+        root.addProperty(PROP_HANDICAP, String.valueOf(handicap));
 
         // 添加先手方信息（如果不是默认的黑先）
         if (board.getFirstPlayer() == GoBoard.WHITE) {

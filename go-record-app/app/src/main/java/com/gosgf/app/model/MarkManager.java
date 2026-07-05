@@ -22,21 +22,8 @@ public class MarkManager {
         return set.contains(new GoBoard.Position(x, y));
     }
 
-    private boolean containsPosition(List<GoBoard.Position> list, int x, int y) {
-        for (GoBoard.Position pos : list) {
-            if (pos.x == x && pos.y == y) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     private boolean removePosition(Set<GoBoard.Position> set, int x, int y) {
         return set.remove(new GoBoard.Position(x, y));
-    }
-
-    private boolean removePosition(List<GoBoard.Position> list, int x, int y) {
-        return list.removeIf(pos -> pos.x == x && pos.y == y);
     }
 
     // ==================== 圆圈标记 ====================

@@ -69,10 +69,17 @@ public class SGFConverterTest {
         assertEquals("Date should be 2024-01-01", "2024-01-01", board.getDate());
         assertEquals("Handicap should be 0", 0, board.getHandicap());
         
-        // 检查走子记录
+        // 检查走子记录（完整记录）
         assertEquals("Move history should have 4 moves", 4, board.getMoveHistory().size());
         
-        // 检查棋盘状态
+        // 检查初始状态（第0步，空棋盘）
+        assertEquals("Initial board should be empty at (3,3)", GoBoard.EMPTY, board.getBoard()[3][3]);
+        
+        // 前进到最后一步
+        while (board.nextMove()) {
+        }
+        
+        // 检查棋盘状态（最后一步）
         assertEquals("Board should have black stone at (3,3)", GoBoard.BLACK, board.getBoard()[3][3]);
         assertEquals("Board should have white stone at (3,15)", GoBoard.WHITE, board.getBoard()[15][3]);
         assertEquals("Board should have black stone at (15,3)", GoBoard.BLACK, board.getBoard()[3][15]);

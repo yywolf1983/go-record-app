@@ -201,6 +201,7 @@ public class BoardView extends View {
 
         int size = Math.min(w, h);
         int margin = Math.max(MARGIN, Math.min(w, h) / 35);
+        
         boardWidth = size - 2 * margin;
         boardHeight = size - 2 * margin;
         cellSize = boardWidth / (BOARD_SIZE - 1);
@@ -208,14 +209,19 @@ public class BoardView extends View {
         int offset = (int)(cellSize * 0.25f);
         marginLeft = margin + offset;
 
-        int offsetTop = (int)(cellSize * 0.5f);
+        int offsetTop = (int)(cellSize * 0.3f);
         marginTop = margin + offsetTop;
+        
+        int offsetBottom = (int)(cellSize * 0.7f);
+        marginBottom = margin + offsetBottom;
     }
 
     // 棋盘左边距（用于偏移棋盘位置）
     private int marginLeft = MARGIN;
     // 棋盘上边距（用于向上偏移）
     private int marginTop = MARGIN;
+    // 棋盘下边距（用于确保下方棋子完整显示）
+    private int marginBottom = MARGIN;
     
     @Override
     protected void onDraw(Canvas canvas) {

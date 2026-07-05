@@ -30,9 +30,10 @@ public class HandicapManager {
             return;
         }
         handicap = handicapCount;
+        clearHandicapStones();
         List<GoBoard.Position> positions = getHandicapPositions(handicapCount);
         for (GoBoard.Position pos : positions) {
-            board[pos.y][pos.x] = GoBoard.BLACK;
+            addBlackHandicapStone(pos.x, pos.y);
         }
     }
 

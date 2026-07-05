@@ -64,12 +64,28 @@ public class BoardSerializer {
         sb.append("|");
 
         // 游戏信息
-        sb.append(blackPlayer != null ? blackPlayer : "").append("|");
-        sb.append(whitePlayer != null ? whitePlayer : "").append("|");
-        sb.append(result != null ? result : "").append("|");
-        sb.append(date != null ? date : "");
+        sb.append(escapeString(blackPlayer != null ? blackPlayer : "")).append("|");
+        sb.append(escapeString(whitePlayer != null ? whitePlayer : "")).append("|");
+        sb.append(escapeString(result != null ? result : "")).append("|");
+        sb.append(escapeString(date != null ? date : ""));
 
         return sb.toString();
+    }
+
+    private static String escapeString(String str) {
+        if (str == null) return "";
+        return str.replace("\\", "\\\\")
+                  .replace("|", "\\|")
+                  .replace(";", "\\;")
+                  .replace(",", "\\,");
+    }
+
+    private static String unescapeString(String str) {
+        if (str == null) return "";
+        return str.replace("\\,", ",")
+                  .replace("\\;", ";")
+                  .replace("\\|", "|")
+                  .replace("\\\\", "\\");
     }
 
     /**
@@ -189,10 +205,10 @@ public class BoardSerializer {
             }
 
             // 游戏信息
-            result.blackPlayer = parts[offset + 6].isEmpty() ? "黑方" : parts[offset + 6];
-            result.whitePlayer = parts[offset + 7].isEmpty() ? "白方" : parts[offset + 7];
-            result.result = parts[offset + 8];
-            result.date = parts[offset + 9];
+            result.blackPlayer = parts[offset + 6].isEmpty() ? "黑方" : unescapeString(parts[offset + 6]);
+            result.whitePlayer = parts[offset + 7].isEmpty() ? "白方" : unescapeString(parts[offset + 7]);
+            result.result = unescapeString(parts[offset + 8]);
+            result.date = unescapeString(parts[offset + 9]);
             result.success = true;
 
         } catch (Exception e) {

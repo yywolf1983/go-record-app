@@ -117,12 +117,16 @@ public class SGFParserTest {
 
     @Test
     public void testParseCompressedVerticesWithRange() {
-        // 测试解析包含范围的压缩顶点列表
+        // 测试解析包含范围的压缩顶点列表（aa:ac 表示从 (0,0) 到 (0,2) 的一列）
         List<int[]> vertices = SGFParser.parseCompressedVertices("aa:ac");
-        assertEquals("Should parse 9 vertices in range", 9, vertices.size());
-        // 检查第一个顶点
+        assertEquals("Should parse 3 vertices in column range", 3, vertices.size());
         assertArrayEquals("First vertex should be [0,0]", new int[]{0, 0}, vertices.get(0));
-        // 检查最后一个顶点
+        assertArrayEquals("Last vertex should be [0,2]", new int[]{0, 2}, vertices.get(2));
+        
+        // 测试 3x3 范围
+        vertices = SGFParser.parseCompressedVertices("aa:cc");
+        assertEquals("Should parse 9 vertices in 3x3 range", 9, vertices.size());
+        assertArrayEquals("First vertex should be [0,0]", new int[]{0, 0}, vertices.get(0));
         assertArrayEquals("Last vertex should be [2,2]", new int[]{2, 2}, vertices.get(8));
     }
 }

@@ -226,34 +226,6 @@ public class ScoreEstimator {
         return 0;
     }
 
-    private int countGroupLiberties(int x, int y, int player, boolean[][] visited) {
-        if (x < 0 || x >= BOARD_SIZE || y < 0 || y >= BOARD_SIZE) return 0;
-        if (visited[y][x]) return 0;
-        
-        visited[y][x] = true;
-        
-        if (board[y][x] == EMPTY) return 1;
-        if (board[y][x] != player) return 0;
-
-        int liberties = 0;
-        int[][] directions = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
-        for (int[] dir : directions) {
-            liberties += countGroupLiberties(x + dir[0], y + dir[1], player, visited);
-        }
-        return liberties;
-    }
-
-    private void markGroupVisited(int x, int y, int player, boolean[][] visited) {
-        if (x < 0 || x >= BOARD_SIZE || y < 0 || y >= BOARD_SIZE) return;
-        if (visited[y][x] || board[y][x] != player) return;
-
-        visited[y][x] = true;
-        int[][] directions = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
-        for (int[] dir : directions) {
-            markGroupVisited(x + dir[0], y + dir[1], player, visited);
-        }
-    }
-
     private int findNearestStone(int x, int y, int player) {
         for (int dist = 1; dist <= 10; dist++) {
             for (int dx = -dist; dx <= dist; dx++) {
@@ -349,45 +321,6 @@ public class ScoreEstimator {
     public List<GoBoard.Position> getWhitePotentialPositions() {
         ensureTerritoryCalculated();
         return new ArrayList<>(cachedWhitePotentialPositions);
-    }
-
-    /**
-     * 获取空区域的归属（BFS填充）
-     * @return BLACK, WHITE, 或 0（双方共有）
-     */
-    private int getRegionOwner(int startX, int startY, boolean[][] visited, List<GoBoard.Position> region) {
-        LinkedList<GoBoard.Position> queue = new LinkedList<>();
-        queue.add(new GoBoard.Position(startX, startY));
-        visited[startY][startX] = true;
-        region.add(new GoBoard.Position(startX, startY));
-
-        int blackBorder = 0;
-        int whiteBorder = 0;
-        int[][] directions = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
-
-        while (!queue.isEmpty()) {
-            GoBoard.Position pos = queue.poll();
-            for (int[] dir : directions) {
-                int nx = pos.x + dir[0];
-                int ny = pos.y + dir[1];
-                if (nx >= 0 && nx < BOARD_SIZE && ny >= 0 && ny < BOARD_SIZE) {
-                    int stone = board[ny][nx];
-                    if (stone == EMPTY && !visited[ny][nx]) {
-                        visited[ny][nx] = true;
-                        queue.add(new GoBoard.Position(nx, ny));
-                        region.add(new GoBoard.Position(nx, ny));
-                    } else if (stone == BLACK) {
-                        blackBorder++;
-                    } else if (stone == WHITE) {
-                        whiteBorder++;
-                    }
-                }
-            }
-        }
-
-        if (blackBorder > 0 && whiteBorder == 0) return BLACK;
-        if (whiteBorder > 0 && blackBorder == 0) return WHITE;
-        return 0;
     }
 
     // ==================== 胜负计算 ====================
@@ -488,13 +421,34 @@ public class ScoreEstimator {
         for (int y = 0; y < BOARD_SIZE; y++) {
             for (int x = 0; x < BOARD_SIZE; x++) {
                 if (board[y][x] == player && !visited[y][x]) {
-                    if (!hasLiberty(x, y, player, visited)) {
-                        deadStones.add(new GoBoard.Position(x, y));
+                    List<GoBoard.Position> group = new ArrayList<>();
+                    collectGroup(x, y, player, visited, group);
+                    if (!groupHasLiberty(group, player)) {
+                        deadStones.addAll(group);
                     }
                 }
             }
         }
         return deadStones;
+    }
+
+    private boolean groupHasLiberty(List<GoBoard.Position> group, int player) {
+        boolean[][] visited = new boolean[BOARD_SIZE][BOARD_SIZE];
+        for (GoBoard.Position pos : group) {
+            visited[pos.y][pos.x] = true;
+        }
+        int[][] directions = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+        for (GoBoard.Position pos : group) {
+            for (int[] dir : directions) {
+                int nx = pos.x + dir[0], ny = pos.y + dir[1];
+                if (nx >= 0 && nx < BOARD_SIZE && ny >= 0 && ny < BOARD_SIZE) {
+                    if (!visited[ny][nx] && board[ny][nx] == EMPTY) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     private boolean hasLiberty(int startX, int startY, int player, boolean[][] visited) {

@@ -56,12 +56,13 @@ public class GameTree {
      * 选择并切换到指定分支
      */
     public boolean selectBranchMove(GoBoard.Move branchMove) {
-        if (currentNode == null) return false;
+        if (currentNode == null || branchMove == null) return false;
 
         for (GoBoard.SGFNode child : currentNode.children) {
             if (child.move != null &&
                 child.move.x == branchMove.x &&
-                child.move.y == branchMove.y) {
+                child.move.y == branchMove.y &&
+                child.move.player == branchMove.player) {
                 currentNode = child;
                 return true;
             }

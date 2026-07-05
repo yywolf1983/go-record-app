@@ -364,45 +364,61 @@ public class GoBoard {
         resetBoard();
         applyHandicapStones();
 
-        List<SGFNode> path = new ArrayList<>();
-        SGFNode tempNode = gameTree.getCurrentNode();
-        while (tempNode != null && tempNode != gameTree.getRoot()) {
-            path.add(0, tempNode);
-            tempNode = tempNode.parent;
-        }
-
         moveHistory.clear();
-        // 使用 firstPlayer 确定先手方，而非仅靠 handicap
         currentPlayer = firstPlayer;
+        koMove = null;
+
+        List<SGFNode> allMoves = new ArrayList<>();
+        SGFNode tempNode = gameTree.getRoot();
+        while (tempNode != null && !tempNode.children.isEmpty()) {
+            if (tempNode.move != null) {
+                allMoves.add(tempNode);
+            }
+            tempNode = tempNode.children.get(0);
+        }
+        if (tempNode != null && tempNode.move != null) {
+            allMoves.add(tempNode);
+        }
 
         String savedErrorMessage = lastErrorMessage;
         lastErrorMessage = "";
-        koMove = null;
 
-        for (SGFNode pathNode : path) {
+        for (SGFNode moveNode : allMoves) {
+            if (moveNode.move.x != -1 && moveNode.move.y != -1) {
+                Move move = new Move(moveNode.move.x, moveNode.move.y, moveNode.move.player);
+                moveHistory.add(move);
+            } else if (moveNode.move.x == -1 && moveNode.move.y == -1) {
+                Move passMove = new Move(-1, -1, moveNode.move.player);
+                moveHistory.add(passMove);
+            }
+        }
+
+        List<SGFNode> currentPath = new ArrayList<>();
+        tempNode = gameTree.getCurrentNode();
+        while (tempNode != null && tempNode != gameTree.getRoot()) {
+            currentPath.add(0, tempNode);
+            tempNode = tempNode.parent;
+        }
+
+        resetBoard();
+        applyHandicapStones();
+        currentPlayer = firstPlayer;
+
+        for (SGFNode pathNode : currentPath) {
             if (pathNode.move != null && pathNode.move.x != -1 && pathNode.move.y != -1) {
                 currentPlayer = pathNode.move.player;
-                boolean success = placeStoneForReconstruction(pathNode.move.x, pathNode.move.y);
-                if (!success) {
-                    board[pathNode.move.y][pathNode.move.x] = pathNode.move.player;
-                    moveHistory.add(pathNode.move);
-                    switchPlayer();
-                }
+                board[pathNode.move.y][pathNode.move.x] = currentPlayer;
+                List<Position> capturedStones = BoardLogic.captureStones(board, pathNode.move.x, pathNode.move.y, currentPlayer);
+                switchPlayer();
             } else if (pathNode.move != null && pathNode.move.x == -1 && pathNode.move.y == -1) {
-                // 处理虚手（pass）
                 currentPlayer = pathNode.move.player;
-                Move passMove = new Move(-1, -1, currentPlayer);
-                moveHistory.add(passMove);
-                lastMove = passMove;
-                currentMoveIndex = moveHistory.size() - 1;
-                koMove = null;
                 switchPlayer();
             }
         }
 
         lastErrorMessage = savedErrorMessage;
-        currentMoveIndex = moveHistory.size() - 1;
-        lastMove = moveHistory.isEmpty() ? null : moveHistory.get(currentMoveIndex);
+        currentMoveIndex = currentPath.size() - 1;
+        lastMove = moveHistory.isEmpty() ? null : moveHistory.get(moveHistory.size() - 1);
         koMove = null;
     }
 

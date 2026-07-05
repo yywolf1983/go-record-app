@@ -6,9 +6,6 @@ import java.util.List;
 import java.util.Map;
 
 public class SGFParser {
-    // 实例指针，用于 JNI 全局变量替代方案
-    private long nativeHandle;
-
     static {
         try {
             System.loadLibrary("gosgf");
@@ -17,15 +14,6 @@ public class SGFParser {
         }
     }
     
-    // 本地方法声明
-    private static native boolean nativeParse(String sgfContent);
-    private static native String[] nativeGetRootProperties();
-    private static native int nativeGetChildrenCount();
-    private static native String[] nativeGetChildProperties(int childIndex);
-    private static native int nativeGetChildChildrenCount(int childIndex);
-    private static native void nativeFreeResources();
-    private native long nativeInit();
-    private native void nativeDestroy();
     public static class SGFParseException extends Exception {
         public SGFParseException(String message) {
             super(message);
@@ -58,53 +46,6 @@ public class SGFParser {
             throw new SGFParseException("Empty SGF content");
         }
         
-        // 强制使用 Java 实现（禁用 C 库）
-        // C 库的解析逻辑有问题，暂时使用 Java 实现
-        /*
-        try {
-            // 尝试调用C实现的解析方法
-            boolean success = nativeParse(sgfContent);
-            if (success) {
-                // 构建Java节点结构
-                Node root = new Node();
-                
-                // 获取根节点属性
-                String[] properties = nativeGetRootProperties();
-                if (properties != null) {
-                    for (String property : properties) {
-                        String[] parts = property.split("=", 2);
-                        if (parts.length == 2) {
-                            root.addProperty(parts[0], parts[1]);
-                        }
-                    }
-                }
-                
-                // 处理子节点
-                int childrenCount = nativeGetChildrenCount();
-                for (int i = 0; i < childrenCount; i++) {
-                    Node childNode = new Node();
-                    // 获取子节点属性
-                    String[] childProperties = nativeGetChildProperties(i);
-                    if (childProperties != null) {
-                        for (String property : childProperties) {
-                            String[] parts = property.split("=", 2);
-                            if (parts.length == 2) {
-                                childNode.addProperty(parts[0], parts[1]);
-                            }
-                        }
-                    }
-                    // 递归处理子节点的子节点
-                    processChildNode(childNode, i);
-                    root.addChild(childNode);
-                }
-                
-                return root;
-            }
-        } catch (UnsatisfiedLinkError e) {
-            // 本地库调用失败，使用 Java 实现
-        }
-        */
-        
         // 使用Java实现解析
         Node root = new Node();
         int index = 0;
@@ -133,47 +74,7 @@ public class SGFParser {
             throw new SGFParseException("Invalid SGF format: missing opening '('");
         }
         
-        // 调试：打印解析结果
-        if (root.children.size() > 0) {
-            if (root.children.get(0).children.size() > 0) {
-            }
-        }
-        
         return root;
-    }
-    
-    // 递归处理子节点
-    private static void processChildNode(Node node, int childIndex) {
-        try {
-            int childrenCount = nativeGetChildChildrenCount(childIndex);
-            for (int i = 0; i < childrenCount; i++) {
-                Node childNode = new Node();
-                // 获取子节点属性
-                String[] childProperties = nativeGetChildProperties(childIndex * 1000 + i); // 使用一个简单的编码方式来表示子节点的索引
-                if (childProperties != null) {
-                    for (String property : childProperties) {
-                        String[] parts = property.split("=", 2);
-                        if (parts.length == 2) {
-                            childNode.addProperty(parts[0], parts[1]);
-                        }
-                    }
-                }
-                // 递归处理子节点的子节点
-                processChildNode(childNode, childIndex * 1000 + i);
-                node.addChild(childNode);
-            }
-        } catch (UnsatisfiedLinkError e) {
-            // 本地库调用失败，忽略
-        }
-    }
-    
-    // 释放本地资源
-    public static void freeResources() {
-        try {
-            nativeFreeResources();
-        } catch (UnsatisfiedLinkError e) {
-            // 本地库调用失败，忽略
-        }
     }
     
     private static int parseTree(String content, int index, Node parent, boolean isRoot) throws SGFParseException {
@@ -385,21 +286,6 @@ public class SGFParser {
             return vertices;
         }
         
-        // 测试用例："aa:ac" 应该返回9个顶点
-        if (input.equals("aa:ac")) {
-            // 手动构建测试期望的结果
-            vertices.add(new int[]{0, 0});
-            vertices.add(new int[]{0, 1});
-            vertices.add(new int[]{0, 2});
-            vertices.add(new int[]{1, 0});
-            vertices.add(new int[]{1, 1});
-            vertices.add(new int[]{1, 2});
-            vertices.add(new int[]{2, 0});
-            vertices.add(new int[]{2, 1});
-            vertices.add(new int[]{2, 2});
-            return vertices;
-        }
-        
         // 处理空格分隔的顶点列表
         int i = 0;
         while (i < input.length()) {
@@ -411,7 +297,6 @@ public class SGFParser {
             
             // 检查是否是范围表示
             if (i + 4 <= input.length() && input.charAt(i + 2) == ':') {
-                // 范围表示，如 "aa:bb"
                 String start = input.substring(i, i + 2);
                 String end = input.substring(i + 3, i + 5);
                 int[] startCoord = parseVertex(start);
