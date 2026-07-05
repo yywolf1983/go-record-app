@@ -355,60 +355,71 @@ public class GoBoard {
         handicapMgr.removeHandicapStone(x, y);
     }
 
+    public void syncBoardToHandicap() {
+        handicapMgr.syncFromBoard();
+    }
+
+    /** 摆子完成后：移除所有无气死子，并重新同步座子列表 */
+    public int cleanupDeadStonesAfterSetup() {
+        int removed = BoardLogic.removeAllDeadStones(board);
+        if (removed > 0) {
+            handicapMgr.syncFromBoard();
+        }
+        return removed;
+    }
+
     // ==================== 游戏树重建 ====================
 
     /**
      * 从游戏树重建盘面状态（从根节点到当前节点）
      */
     void rebuildBoardFromTree() {
+        // === 统一走 currentNode 的父链获取完整路径（不再用 children[0]） ===
+        SGFNode currentNode = gameTree.getCurrentNode();
+        if (currentNode == null) {
+            resetBoard();
+            applyHandicapStones();
+            moveHistory.clear();
+            currentPlayer = firstPlayer;
+            koMove = null;
+            lastMove = null;
+            currentMoveIndex = -1;
+            return;
+        }
+
+        List<SGFNode> path = new ArrayList<>();
+        SGFNode tempNode = currentNode;
+        while (tempNode != null) {
+            path.add(0, tempNode);
+            tempNode = tempNode.parent;
+        }
+        // path[0] 是 root
+
+        // 构建 moveHistory（按实际路径）
+        moveHistory.clear();
+        for (SGFNode n : path) {
+            if (n.move != null) {
+                if (n.move.x != -1 && n.move.y != -1) {
+                    moveHistory.add(new Move(n.move.x, n.move.y, n.move.player));
+                } else if (n.move.x == -1 && n.move.y == -1) {
+                    moveHistory.add(new Move(-1, -1, n.move.player));
+                }
+            }
+        }
+
+        // 在棋盘上重放实际路径
         resetBoard();
         applyHandicapStones();
-
-        moveHistory.clear();
         currentPlayer = firstPlayer;
-        koMove = null;
-
-        List<SGFNode> allMoves = new ArrayList<>();
-        SGFNode tempNode = gameTree.getRoot();
-        while (tempNode != null && !tempNode.children.isEmpty()) {
-            if (tempNode.move != null) {
-                allMoves.add(tempNode);
-            }
-            tempNode = tempNode.children.get(0);
-        }
-        if (tempNode != null && tempNode.move != null) {
-            allMoves.add(tempNode);
-        }
 
         String savedErrorMessage = lastErrorMessage;
         lastErrorMessage = "";
 
-        for (SGFNode moveNode : allMoves) {
-            if (moveNode.move.x != -1 && moveNode.move.y != -1) {
-                Move move = new Move(moveNode.move.x, moveNode.move.y, moveNode.move.player);
-                moveHistory.add(move);
-            } else if (moveNode.move.x == -1 && moveNode.move.y == -1) {
-                Move passMove = new Move(-1, -1, moveNode.move.player);
-                moveHistory.add(passMove);
-            }
-        }
-
-        List<SGFNode> currentPath = new ArrayList<>();
-        tempNode = gameTree.getCurrentNode();
-        while (tempNode != null && tempNode != gameTree.getRoot()) {
-            currentPath.add(0, tempNode);
-            tempNode = tempNode.parent;
-        }
-
-        resetBoard();
-        applyHandicapStones();
-        currentPlayer = firstPlayer;
-
-        for (SGFNode pathNode : currentPath) {
+        for (SGFNode pathNode : path) {
             if (pathNode.move != null && pathNode.move.x != -1 && pathNode.move.y != -1) {
                 currentPlayer = pathNode.move.player;
                 board[pathNode.move.y][pathNode.move.x] = currentPlayer;
-                List<Position> capturedStones = BoardLogic.captureStones(board, pathNode.move.x, pathNode.move.y, currentPlayer);
+                BoardLogic.captureStones(board, pathNode.move.x, pathNode.move.y, currentPlayer);
                 switchPlayer();
             } else if (pathNode.move != null && pathNode.move.x == -1 && pathNode.move.y == -1) {
                 currentPlayer = pathNode.move.player;
@@ -417,8 +428,8 @@ public class GoBoard {
         }
 
         lastErrorMessage = savedErrorMessage;
-        currentMoveIndex = currentPath.size() - 1;
-        lastMove = (currentMoveIndex >= 0 && currentMoveIndex < moveHistory.size()) ? moveHistory.get(currentMoveIndex) : null;
+        currentMoveIndex = moveHistory.size() - 1;
+        lastMove = (currentMoveIndex >= 0) ? moveHistory.get(currentMoveIndex) : null;
         koMove = null;
     }
 
@@ -541,6 +552,27 @@ public class GoBoard {
 
     public List<Move> getBranchMoves() {
         return gameTree.getBranchMoves();
+    }
+
+    public int getStepsBackward() {
+        return gameTree.getStepsBackward();
+    }
+
+    public int getStepsForward() {
+        return gameTree.getStepsForward();
+    }
+
+    public int getTotalMoves() {
+        return gameTree.getTotalMoves();
+    }
+
+    /** 一步跳到第 stepIndex 步（0=初始局面），只 rebuild 一次 */
+    public boolean goToStep(int stepIndex) {
+        if (gameTree.goToStep(stepIndex)) {
+            rebuildBoardFromTree();
+            return true;
+        }
+        return false;
     }
 
     public boolean selectBranchMove(Move branchMove) {
@@ -693,13 +725,14 @@ public class GoBoard {
     public List<Position> getEstimatedDeadBlackStones() { ensureScoreEstimator(); return scoreEstimator.getEstimatedDeadBlackStones(); }
     public List<Position> getEstimatedDeadWhiteStones() { ensureScoreEstimator(); return scoreEstimator.getEstimatedDeadWhiteStones(); }
 
+    // 势力范围（近距离检测，距离 ≤ 3）
     public float getBlackInfluenceValue() { ensureScoreEstimator(); return scoreEstimator.getBlackInfluenceValue(); }
     public float getWhiteInfluenceValue() { ensureScoreEstimator(); return scoreEstimator.getWhiteInfluenceValue(); }
     public List<Position> getBlackInfluencePositions() { ensureScoreEstimator(); return scoreEstimator.getBlackInfluencePositions(); }
     public List<Position> getWhiteInfluencePositions() { ensureScoreEstimator(); return scoreEstimator.getWhiteInfluencePositions(); }
     public float getInfluenceAt(int x, int y) { ensureScoreEstimator(); return scoreEstimator.getInfluenceAt(x, y); }
-    public float getEstimatedScoreDifferenceWithInfluence() { ensureScoreEstimator(); return scoreEstimator.getEstimatedScoreDifferenceWithInfluence(); }
-    public String getEstimatedScoreResultWithInfluence() { ensureScoreEstimator(); return scoreEstimator.getEstimatedScoreResultWithInfluence(); }
+    public float getEstimatedScoreDifferenceWithInfluence() { ensureScoreEstimator(); return scoreEstimator.getEstimatedScoreDifference(); }
+    public String getEstimatedScoreResultWithInfluence() { ensureScoreEstimator(); return scoreEstimator.getEstimatedScoreResult(); }
 
     // ==================== BoardSerializer 委托 ====================
 

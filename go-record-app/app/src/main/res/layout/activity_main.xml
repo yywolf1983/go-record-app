@@ -152,28 +152,6 @@
                     android:gravity="center"
                     android:layout_marginHorizontal="8dp">
                     <ImageButton
-                        android:id="@+id/btn_jump"
-                        android:layout_width="36dp"
-                        android:layout_height="36dp"
-                        android:src="@drawable/ic_jump"
-                        android:background="@drawable/btn_secondary"
-                        android:padding="4dp" />
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="跳转"
-                        android:textSize="10sp"
-                        android:textColor="@color/white"
-                        android:layout_marginTop="2dp" />
-                </LinearLayout>
-
-                <LinearLayout
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:gravity="center"
-                    android:layout_marginHorizontal="8dp">
-                    <ImageButton
                         android:id="@+id/btn_place"
                         android:layout_width="36dp"
                         android:layout_height="36dp"
@@ -181,6 +159,7 @@
                         android:background="@drawable/btn_secondary"
                         android:padding="4dp" />
                     <TextView
+                        android:id="@+id/btn_place_label"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="摆子"

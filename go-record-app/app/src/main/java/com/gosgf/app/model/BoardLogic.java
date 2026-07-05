@@ -137,4 +137,32 @@ public class BoardLogic {
             }
         }
     }
+
+    /**
+     * 移除盘面上所有无气的死子（摆子完成后调用）
+     * @return 被移除的棋子数量
+     */
+    public static int removeAllDeadStones(int[][] board) {
+        boolean[][] visited = new boolean[BOARD_SIZE][BOARD_SIZE];
+        int removed = 0;
+
+        for (int y = 0; y < BOARD_SIZE; y++) {
+            for (int x = 0; x < BOARD_SIZE; x++) {
+                if (board[y][x] != EMPTY && !visited[y][x]) {
+                    int player = board[y][x];
+                    List<GoBoard.Position> group = getGroup(board, x, y, player);
+                    for (GoBoard.Position p : group) {
+                        visited[p.y][p.x] = true;
+                    }
+                    if (!hasLiberty(board, x, y, player)) {
+                        for (GoBoard.Position p : group) {
+                            board[p.y][p.x] = EMPTY;
+                            removed++;
+                        }
+                    }
+                }
+            }
+        }
+        return removed;
+    }
 }

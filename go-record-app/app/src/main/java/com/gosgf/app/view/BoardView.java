@@ -538,7 +538,9 @@ public class BoardView extends View {
 
     private void drawTerritory(Canvas canvas) {
         float territoryDotSize = cellSize / 4;
-        float potentialDotSize = cellSize / 5;
+        float influenceDotSize = cellSize / 5;
+
+        // --- 确定围空（BFS，较深色） ---
 
         Paint blackTerritoryPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         blackTerritoryPaint.setColor(Color.BLACK);
@@ -554,16 +556,6 @@ public class BoardView extends View {
         whiteBorderPaint.setColor(0xFF5D4037);
         whiteBorderPaint.setStyle(Paint.Style.STROKE);
         whiteBorderPaint.setStrokeWidth(1);
-
-        Paint blackPotentialPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        blackPotentialPaint.setColor(Color.BLACK);
-        blackPotentialPaint.setStyle(Paint.Style.FILL);
-        blackPotentialPaint.setAlpha(80);
-
-        Paint whitePotentialPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        whitePotentialPaint.setColor(Color.WHITE);
-        whitePotentialPaint.setStyle(Paint.Style.FILL);
-        whitePotentialPaint.setAlpha(80);
 
         java.util.List<GoBoard.Position> blackTerritory = board.getBlackTerritoryPositions();
         if (blackTerritory != null) {
@@ -584,12 +576,29 @@ public class BoardView extends View {
             }
         }
 
+        // --- 势力范围（近距离检测，较浅色/小点） ---
+
+        Paint blackInfluencePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        blackInfluencePaint.setColor(Color.BLACK);
+        blackInfluencePaint.setStyle(Paint.Style.FILL);
+        blackInfluencePaint.setAlpha(80);
+
+        Paint whiteInfluencePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        whiteInfluencePaint.setColor(Color.WHITE);
+        whiteInfluencePaint.setStyle(Paint.Style.FILL);
+        whiteInfluencePaint.setAlpha(80);
+
+        Paint whiteInfluenceBorderPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        whiteInfluenceBorderPaint.setColor(0xFF5D4037);
+        whiteInfluenceBorderPaint.setStyle(Paint.Style.STROKE);
+        whiteInfluenceBorderPaint.setStrokeWidth(1);
+
         java.util.List<GoBoard.Position> blackPotential = board.getBlackPotentialPositions();
         if (blackPotential != null) {
             for (GoBoard.Position pos : blackPotential) {
                 float px = marginLeft + pos.x * cellSize;
                 float py = marginTop + pos.y * cellSize;
-                canvas.drawCircle(px, py, potentialDotSize, blackPotentialPaint);
+                canvas.drawCircle(px, py, influenceDotSize, blackInfluencePaint);
             }
         }
 
@@ -598,42 +607,8 @@ public class BoardView extends View {
             for (GoBoard.Position pos : whitePotential) {
                 float px = marginLeft + pos.x * cellSize;
                 float py = marginTop + pos.y * cellSize;
-                canvas.drawCircle(px, py, potentialDotSize, whitePotentialPaint);
-                canvas.drawCircle(px, py, potentialDotSize, whiteBorderPaint);
-            }
-        }
-
-        Paint blackInfluencePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        blackInfluencePaint.setColor(Color.BLACK);
-        blackInfluencePaint.setStyle(Paint.Style.FILL);
-        blackInfluencePaint.setAlpha(120);
-
-        Paint whiteInfluencePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        whiteInfluencePaint.setColor(Color.WHITE);
-        whiteInfluencePaint.setStyle(Paint.Style.FILL);
-        whiteInfluencePaint.setAlpha(120);
-
-        Paint whiteInfluenceBorderPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        whiteInfluenceBorderPaint.setColor(0xFF5D4037);
-        whiteInfluenceBorderPaint.setStyle(Paint.Style.STROKE);
-        whiteInfluenceBorderPaint.setStrokeWidth(1);
-
-        java.util.List<GoBoard.Position> blackInfluence = board.getBlackInfluencePositions();
-        if (blackInfluence != null) {
-            for (GoBoard.Position pos : blackInfluence) {
-                float px = marginLeft + pos.x * cellSize;
-                float py = marginTop + pos.y * cellSize;
-                canvas.drawCircle(px, py, territoryDotSize, blackInfluencePaint);
-            }
-        }
-
-        java.util.List<GoBoard.Position> whiteInfluence = board.getWhiteInfluencePositions();
-        if (whiteInfluence != null) {
-            for (GoBoard.Position pos : whiteInfluence) {
-                float px = marginLeft + pos.x * cellSize;
-                float py = marginTop + pos.y * cellSize;
-                canvas.drawCircle(px, py, territoryDotSize, whiteInfluencePaint);
-                canvas.drawCircle(px, py, territoryDotSize, whiteInfluenceBorderPaint);
+                canvas.drawCircle(px, py, influenceDotSize, whiteInfluencePaint);
+                canvas.drawCircle(px, py, influenceDotSize, whiteInfluenceBorderPaint);
             }
         }
     }

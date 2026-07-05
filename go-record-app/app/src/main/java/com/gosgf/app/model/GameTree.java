@@ -126,6 +126,88 @@ public class GameTree {
         return null;
     }
 
+    // ==================== 步数统计 ====================
+
+    /**
+     * 从当前节点沿 parent 回到 root 可走的步数（上一步步数上限）
+     */
+    public int getStepsBackward() {
+        if (currentNode == null || root == null) return 0;
+        int steps = 0;
+        GoBoard.SGFNode node = currentNode;
+        while (node.parent != null) {
+            steps++;
+            node = node.parent;
+        }
+        return steps;
+    }
+
+    /**
+     * 从当前节点沿 children.get(0) 走到末端可走的步数（下一步步数上限）
+     */
+    public int getStepsForward() {
+        if (currentNode == null) return 0;
+        int steps = 0;
+        GoBoard.SGFNode node = currentNode;
+        while (!node.children.isEmpty()) {
+            steps++;
+            node = node.children.get(0);
+        }
+        return steps;
+    }
+
+    /**
+     * 获取当前分支路径：从根到当前节点的 child index 序列
+     */
+    private List<Integer> getBranchPath() {
+        List<Integer> path = new ArrayList<>();
+        if (currentNode == null) return path;
+        GoBoard.SGFNode node = currentNode;
+        while (node.parent != null) {
+            int idx = node.parent.children.indexOf(node);
+            path.add(0, idx);
+            node = node.parent;
+        }
+        return path;
+    }
+
+    /**
+     * 从根节点沿当前分支路径 + children[0] 走到末端的总步数
+     */
+    public int getTotalMoves() {
+        if (root == null) return 0;
+        List<Integer> branchPath = getBranchPath();
+        int steps = 0;
+        GoBoard.SGFNode node = root;
+        int pathIdx = 0;
+        while (!node.children.isEmpty()) {
+            int childIdx = (pathIdx < branchPath.size()) ? branchPath.get(pathIdx) : 0;
+            if (childIdx >= node.children.size()) break;
+            node = node.children.get(childIdx);
+            pathIdx++;
+            if (node.move != null) steps++;
+        }
+        return steps;
+    }
+
+    /**
+     * 跳转到第 stepIndex 步（0=根节点），沿当前分支路径前进
+     * @return 是否成功
+     */
+    public boolean goToStep(int stepIndex) {
+        if (root == null) return false;
+        List<Integer> branchPath = getBranchPath();
+        currentNode = root;
+        for (int i = 0; i < stepIndex; i++) {
+            int childIdx = (i < branchPath.size()) ? branchPath.get(i) : 0;
+            if (currentNode.children.isEmpty() || childIdx >= currentNode.children.size()) {
+                return false;
+            }
+            currentNode = currentNode.children.get(childIdx);
+        }
+        return true;
+    }
+
     // ==================== 树遍历 ====================
 
     /**

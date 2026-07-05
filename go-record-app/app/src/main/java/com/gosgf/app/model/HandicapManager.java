@@ -140,6 +140,23 @@ public class HandicapManager {
     /**
      * 移除指定位置的棋子（用于摆子模式）
      */
+    /**
+     * 从当前 board 数组同步所有棋子到座子列表（进入摆子模式时调用）
+     */
+    public void syncFromBoard() {
+        blackHandicapStones.clear();
+        whiteHandicapStones.clear();
+        for (int y = 0; y < board.length; y++) {
+            for (int x = 0; x < board[y].length; x++) {
+                if (board[y][x] == GoBoard.BLACK) {
+                    blackHandicapStones.add(new GoBoard.Position(x, y));
+                } else if (board[y][x] == GoBoard.WHITE) {
+                    whiteHandicapStones.add(new GoBoard.Position(x, y));
+                }
+            }
+        }
+    }
+
     public void removeHandicapStone(int x, int y) {
         GoBoard.Position blackToRemove = null;
         for (GoBoard.Position pos : blackHandicapStones) {
