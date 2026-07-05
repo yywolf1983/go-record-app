@@ -498,6 +498,10 @@ public class GoBoard {
         return gameTree.getRoot();
     }
 
+    public GameTree getGameTree() {
+        return gameTree;
+    }
+
     public SGFNode getCurrentNode() {
         return gameTree.getCurrentNode();
     }

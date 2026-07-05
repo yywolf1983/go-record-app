@@ -18,4 +18,5 @@
     <color name="divider">#E0E0E0</color>
     <color name="last_move">#E53935</color>
     <color name="highlight">#FFD54F</color>
+    <color name="icon_color">#FFFFFF</color>
 </resources>

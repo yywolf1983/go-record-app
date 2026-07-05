@@ -7,22 +7,296 @@
     android:orientation="vertical"
     tools:context=".MainActivity">
 
-    <!-- 棋盘区域容器 -->
-    <FrameLayout
+    <!-- 顶部功能按钮栏 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:padding="2dp"
+        android:layout_marginBottom="4dp"
+        android:background="@color/board_background">
+
+            <!-- 第一行按钮：文件操作和显示控制 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center"
+                android:padding="2dp">
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:gravity="center"
+                    android:layout_marginHorizontal="8dp">
+                    <ImageButton
+                        android:id="@+id/btn_new"
+                        android:layout_width="36dp"
+                        android:layout_height="36dp"
+                        android:src="@drawable/ic_new"
+                        android:background="@drawable/btn_secondary"
+                        android:padding="4dp" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="新建"
+                        android:textSize="10sp"
+                        android:textColor="@color/white"
+                        android:layout_marginTop="2dp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:gravity="center"
+                    android:layout_marginHorizontal="8dp">
+                    <ImageButton
+                        android:id="@+id/btn_load"
+                        android:layout_width="36dp"
+                        android:layout_height="36dp"
+                        android:src="@drawable/ic_load"
+                        android:background="@drawable/btn_secondary"
+                        android:padding="4dp" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="加载"
+                        android:textSize="10sp"
+                        android:textColor="@color/white"
+                        android:layout_marginTop="2dp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:gravity="center"
+                    android:layout_marginHorizontal="8dp">
+                    <ImageButton
+                        android:id="@+id/btn_save"
+                        android:layout_width="36dp"
+                        android:layout_height="36dp"
+                        android:src="@drawable/ic_save"
+                        android:background="@drawable/btn_secondary"
+                        android:padding="4dp" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="保存"
+                        android:textSize="10sp"
+                        android:textColor="@color/white"
+                        android:layout_marginTop="2dp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:gravity="center"
+                    android:layout_marginHorizontal="8dp">
+                    <ImageButton
+                        android:id="@+id/btn_show_numbers"
+                        android:layout_width="36dp"
+                        android:layout_height="36dp"
+                        android:src="@drawable/ic_number"
+                        android:background="@drawable/btn_secondary"
+                        android:padding="4dp" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="步数"
+                        android:textSize="10sp"
+                        android:textColor="@color/white"
+                        android:layout_marginTop="2dp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:gravity="center"
+                    android:layout_marginHorizontal="8dp">
+                    <ImageButton
+                        android:id="@+id/btn_score"
+                        android:layout_width="36dp"
+                        android:layout_height="36dp"
+                        android:src="@drawable/ic_score"
+                        android:background="@drawable/btn_secondary"
+                        android:padding="4dp" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="估算"
+                        android:textSize="10sp"
+                        android:textColor="@color/white"
+                        android:layout_marginTop="2dp" />
+                </LinearLayout>
+
+            </LinearLayout>
+
+            <!-- 第二行按钮：游戏操作 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center"
+                android:padding="2dp">
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:gravity="center"
+                    android:layout_marginHorizontal="8dp">
+                    <ImageButton
+                        android:id="@+id/btn_jump"
+                        android:layout_width="36dp"
+                        android:layout_height="36dp"
+                        android:src="@drawable/ic_jump"
+                        android:background="@drawable/btn_secondary"
+                        android:padding="4dp" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="跳转"
+                        android:textSize="10sp"
+                        android:textColor="@color/white"
+                        android:layout_marginTop="2dp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:gravity="center"
+                    android:layout_marginHorizontal="8dp">
+                    <ImageButton
+                        android:id="@+id/btn_place"
+                        android:layout_width="36dp"
+                        android:layout_height="36dp"
+                        android:src="@drawable/ic_place"
+                        android:background="@drawable/btn_secondary"
+                        android:padding="4dp" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="摆子"
+                        android:textSize="10sp"
+                        android:textColor="@color/white"
+                        android:layout_marginTop="2dp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:gravity="center"
+                    android:layout_marginHorizontal="8dp">
+                    <ImageButton
+                        android:id="@+id/btn_mark"
+                        android:layout_width="36dp"
+                        android:layout_height="36dp"
+                        android:src="@drawable/ic_mark"
+                        android:background="@drawable/btn_secondary"
+                        android:padding="4dp" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="标记"
+                        android:textSize="10sp"
+                        android:textColor="@color/white"
+                        android:layout_marginTop="2dp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:gravity="center"
+                    android:layout_marginHorizontal="8dp">
+                    <ImageButton
+                        android:id="@+id/btn_pass"
+                        android:layout_width="36dp"
+                        android:layout_height="36dp"
+                        android:src="@drawable/ic_pass"
+                        android:background="@drawable/btn_secondary"
+                        android:padding="4dp" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="虚手"
+                        android:textSize="10sp"
+                        android:textColor="@color/white"
+                        android:layout_marginTop="2dp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:gravity="center"
+                    android:layout_marginHorizontal="8dp">
+                    <ImageButton
+                        android:id="@+id/btn_comment"
+                        android:layout_width="36dp"
+                        android:layout_height="36dp"
+                        android:src="@drawable/ic_comment"
+                        android:background="@drawable/btn_secondary"
+                        android:padding="4dp" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="注释"
+                        android:textSize="10sp"
+                        android:textColor="@color/white"
+                        android:layout_marginTop="2dp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:gravity="center"
+                    android:layout_marginHorizontal="8dp">
+                    <ImageButton
+                        android:id="@+id/btn_delete_branch"
+                        android:layout_width="36dp"
+                        android:layout_height="36dp"
+                        android:src="@drawable/ic_branch"
+                        android:background="@drawable/btn_secondary"
+                        android:padding="4dp" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="分支"
+                        android:textSize="10sp"
+                        android:textColor="@color/white"
+                        android:layout_marginTop="2dp" />
+                </LinearLayout>
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+    <!-- 棋盘区域 -->
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="8"
+        android:layout_weight="99"
+        android:orientation="vertical"
+        android:gravity="center"
         android:background="@color/board_background"
-        android:padding="4dp">
+        android:padding="0dp">
 
-        <!-- 棋盘 -->
         <com.gosgf.app.view.BoardView
             android:id="@+id/boardView"
             android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:layout_gravity="center" />
+            android:layout_height="match_parent" />
 
-    </FrameLayout>
+    </LinearLayout>
 
     <!-- 步数和注释区域 -->
     <LinearLayout
@@ -31,23 +305,23 @@
         android:orientation="vertical"
         android:background="@color/white">
 
-        <!-- 步数显示 -->
         <TextView
             android:id="@+id/moveCountText"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:padding="8dp"
+            android:paddingVertical="2dp"
+            android:paddingHorizontal="8dp"
             android:text="步数: 0 / 0"
             android:textSize="14sp"
             android:textColor="@color/accent"
             android:textStyle="bold" />
 
-        <!-- 注释显示区域 -->
         <ScrollView
             android:id="@+id/commentScrollView"
             android:layout_width="match_parent"
-            android:layout_height="100dp"
-            android:padding="8dp">
+            android:layout_height="150dp"
+            android:paddingVertical="4dp"
+            android:paddingHorizontal="8dp">
 
             <TextView
                 android:id="@+id/commentText"
@@ -61,187 +335,43 @@
 
     </LinearLayout>
 
-    <!-- 控制按钮区域 -->
+    <!-- 底部导航按钮 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
+        android:orientation="horizontal"
+        android:gravity="center"
         android:background="@color/surface"
         android:elevation="2dp"
         android:padding="4dp">
 
-        <!-- 工具栏 -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center"
-            android:layout_marginBottom="8dp">
+        <Button
+            android:id="@+id/btn_previous"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_weight="1"
+            android:text="@string/action_previous"
+            android:layout_marginHorizontal="8dp"
+            android:textColor="@color/white"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:background="@drawable/btn_secondary"
+            android:elevation="2dp"
+            android:stateListAnimator="@null" />
 
-            <Button
-                android:id="@+id/btn_new"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="@string/action_new"
-                android:layout_marginHorizontal="4dp" />
-
-            <Button
-                android:id="@+id/btn_load"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="@string/action_load"
-                android:layout_marginHorizontal="4dp" />
-
-            <Button
-                android:id="@+id/btn_save"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="@string/action_save"
-                android:layout_marginHorizontal="4dp" />
-
-            <Button
-                android:id="@+id/btn_score"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="估算"
-                android:layout_marginHorizontal="4dp" />
-
-        </LinearLayout>
-
-        <!-- 导航栏 -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center"
-            android:layout_marginBottom="8dp">
-
-            <Button
-                android:id="@+id/btn_to_start"
-                android:layout_width="0dp"
-                android:layout_height="40dp"
-                android:layout_weight="1"
-                android:text="跳转"
-                android:layout_marginHorizontal="4dp"
-                android:textColor="@color/white"
-                android:textSize="14sp"
-                android:textStyle="bold"
-                android:background="@drawable/btn_secondary"
-                android:elevation="2dp"
-                android:stateListAnimator="@null" />
-
-            <Button
-                android:id="@+id/btn_previous"
-                android:layout_width="0dp"
-                android:layout_height="40dp"
-                android:layout_weight="1"
-                android:text="@string/action_previous"
-                android:layout_marginHorizontal="4dp"
-                android:textColor="@color/white"
-                android:textSize="14sp"
-                android:textStyle="bold"
-                android:background="@drawable/btn_secondary"
-                android:elevation="2dp"
-                android:stateListAnimator="@null" />
-
-            <Button
-                android:id="@+id/btn_next"
-                android:layout_width="0dp"
-                android:layout_height="40dp"
-                android:layout_weight="1"
-                android:text="@string/action_next"
-                android:layout_marginHorizontal="4dp"
-                android:textColor="@color/white"
-                android:textSize="14sp"
-                android:textStyle="bold"
-                android:background="@drawable/btn_secondary"
-                android:elevation="2dp"
-                android:stateListAnimator="@null" />
-
-            <Button
-                android:id="@+id/btn_pass"
-                android:layout_width="0dp"
-                android:layout_height="40dp"
-                android:layout_weight="1"
-                android:text="@string/action_pass"
-                android:layout_marginHorizontal="4dp"
-                android:textColor="@color/white"
-                android:textSize="14sp"
-                android:textStyle="bold"
-                android:background="@drawable/btn_secondary"
-                android:elevation="2dp"
-                android:stateListAnimator="@null" />
-
-        </LinearLayout>
-
-        <!-- 功能栏 -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center">
-
-            <Button
-                android:id="@+id/btn_comment"
-                android:layout_width="0dp"
-                android:layout_height="40dp"
-                android:layout_weight="1"
-                android:text="@string/action_comment"
-                android:layout_marginHorizontal="4dp"
-                android:textColor="@color/white"
-                android:textSize="14sp"
-                android:textStyle="bold"
-                android:background="@drawable/btn_secondary"
-                android:elevation="2dp"
-                android:stateListAnimator="@null" />
-
-            <Button
-                android:id="@+id/btn_mark"
-                android:layout_width="0dp"
-                android:layout_height="40dp"
-                android:layout_weight="1"
-                android:text="@string/action_mark"
-                android:layout_marginHorizontal="4dp"
-                android:textColor="@color/white"
-                android:textSize="14sp"
-                android:textStyle="bold"
-                android:background="@drawable/btn_secondary"
-                android:elevation="2dp"
-                android:stateListAnimator="@null" />
-
-            <Button
-                android:id="@+id/btn_place"
-                android:layout_width="0dp"
-                android:layout_height="40dp"
-                android:layout_weight="1"
-                android:text="摆子"
-                android:layout_marginHorizontal="4dp"
-                android:textColor="@color/white"
-                android:textSize="14sp"
-                android:textStyle="bold"
-                android:background="@drawable/btn_secondary"
-                android:elevation="2dp"
-                android:stateListAnimator="@null" />
-
-            <Button
-                android:id="@+id/btn_delete_branch"
-                android:layout_width="0dp"
-                android:layout_height="40dp"
-                android:layout_weight="1"
-                android:text="删除分支"
-                android:layout_marginHorizontal="4dp"
-                android:textColor="@color/white"
-                android:textSize="14sp"
-                android:textStyle="bold"
-                android:background="@drawable/btn_secondary"
-                android:elevation="2dp"
-                android:stateListAnimator="@null" />
-
-        </LinearLayout>
+        <Button
+            android:id="@+id/btn_next"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_weight="1"
+            android:text="@string/action_next"
+            android:layout_marginHorizontal="8dp"
+            android:textColor="@color/white"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:background="@drawable/btn_secondary"
+            android:elevation="2dp"
+            android:stateListAnimator="@null" />
 
     </LinearLayout>
 

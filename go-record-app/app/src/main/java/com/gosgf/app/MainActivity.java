@@ -7,6 +7,7 @@ import android.os.Bundle;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.ImageButton;
 import android.widget.EditText;
 import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
@@ -50,18 +51,19 @@ import java.util.List;
     private BoardView.OnBranchSelectListener branchSelectListener;
     private BoardView.OnBranchDeleteListener branchDeleteListener;
     
-    private Button btnNew;
-    private Button btnLoad;
-    private Button btnSave;
-    private Button btnToStart;
+    private ImageButton btnNew;
+    private ImageButton btnLoad;
+    private ImageButton btnSave;
     private Button btnPrevious;
     private Button btnNext;
-    private Button btnPass;
-    private Button btnComment;
-    private Button btnMark;
-    private Button btnPlace;
-    private Button btnDeleteBranch;
-    private Button btnScore;
+    private ImageButton btnPass;
+    private ImageButton btnComment;
+    private ImageButton btnMark;
+    private ImageButton btnPlace;
+    private ImageButton btnDeleteBranch;
+    private ImageButton btnScore;
+    private ImageButton btnShowNumbers;
+    private ImageButton btnJump;
 
     // 摆子模式状态
     private boolean isPlaceMode = false;
@@ -193,7 +195,6 @@ import java.util.List;
         btnSave = findViewById(R.id.btn_save);
 
         // 导航栏按钮
-        btnToStart = findViewById(R.id.btn_to_start);
         btnPrevious = findViewById(R.id.btn_previous);
         btnNext = findViewById(R.id.btn_next);
         btnPass = findViewById(R.id.btn_pass);
@@ -204,13 +205,14 @@ import java.util.List;
         btnPlace = findViewById(R.id.btn_place);
         btnDeleteBranch = findViewById(R.id.btn_delete_branch);
         btnScore = findViewById(R.id.btn_score);
+        btnShowNumbers = findViewById(R.id.btn_show_numbers);
+        btnJump = findViewById(R.id.btn_jump);
 
         // 设置点击监听器
         btnNew.setOnClickListener(v -> onNewGame());
         btnLoad.setOnClickListener(v -> onLoadGame());
         btnSave.setOnClickListener(v -> onSaveGame());
 
-        btnToStart.setOnClickListener(v -> onToStart());
         btnPrevious.setOnClickListener(v -> onPrevious());
         btnNext.setOnClickListener(v -> onNext());
         btnPass.setOnClickListener(v -> onPass());
@@ -220,6 +222,8 @@ import java.util.List;
         btnPlace.setOnClickListener(v -> onPlace());
         btnDeleteBranch.setOnClickListener(v -> onDeleteBranch());
         btnScore.setOnClickListener(v -> onScore());
+        btnShowNumbers.setOnClickListener(v -> onShowNumbers());
+        btnJump.setOnClickListener(v -> showJumpDialog());
     }
     
     private void onBoardTouch(int x, int y) {
@@ -270,7 +274,6 @@ import java.util.List;
         isPlaceMode = !isPlaceMode;
         boardView.setPlaceMode(isPlaceMode);
         if (isPlaceMode) {
-            btnPlace.setText("完成摆子");
             Toast.makeText(this, "点击棋盘摆子（黑棋）", Toast.LENGTH_SHORT).show();
         } else {
             // 完成摆子
@@ -278,7 +281,6 @@ import java.util.List;
             int whiteCount = board.getWhiteHandicapStones().size();
             int total = blackCount + whiteCount;
             board.setHandicap(blackCount); // 保存黑棋数作为handicap
-            btnPlace.setText("摆子");
 
             // 保存当前座子（用于后面恢复）
             java.util.List<GoBoard.Position> savedBlackStones = new java.util.ArrayList<>(board.getBlackHandicapStones());
@@ -350,6 +352,10 @@ import java.util.List;
     
     private void onSettings() {
         // 打开设置界面（暂未实现）
+    }
+
+    private void onShowNumbers() {
+        boardView.toggleMoveNumbers();
     }
 
     private void onToStart() {
@@ -794,7 +800,6 @@ import java.util.List;
         if (isMarkMode) {
             // 退出标记模式
             isMarkMode = false;
-            btnMark.setText("标记");
             boardView.refresh();
             return;
         }
@@ -811,9 +816,6 @@ import java.util.List;
                 // 关闭摆子模式
                 isPlaceMode = false;
                 boardView.setPlaceMode(false);
-                btnPlace.setText("摆子");
-
-                btnMark.setText("完成标记");
 
                 // 设置标记放置监听器
                 markPlaceListener = (x, y) -> {
