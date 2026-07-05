@@ -418,7 +418,7 @@ public class GoBoard {
 
         lastErrorMessage = savedErrorMessage;
         currentMoveIndex = currentPath.size() - 1;
-        lastMove = moveHistory.isEmpty() ? null : moveHistory.get(moveHistory.size() - 1);
+        lastMove = (currentMoveIndex >= 0 && currentMoveIndex < moveHistory.size()) ? moveHistory.get(currentMoveIndex) : null;
         koMove = null;
     }
 

@@ -383,7 +383,9 @@ public class BoardView extends View {
         if (lastMove != null && lastMove.x != -1 && lastMove.y != -1) {
             float px = marginLeft + lastMove.x * cellSize;
             float py = marginTop + lastMove.y * cellSize;
-            float radius = cellSize / 2;
+            
+            float stoneRadius = cellSize / 2 - 0.2f;
+            float radius = stoneRadius + 2;
 
             canvas.drawCircle(px, py, radius, lastMovePaint);
         }
