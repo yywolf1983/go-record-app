@@ -12,7 +12,7 @@
         android:layout_height="wrap_content"
         android:text="步数: 0 / 0"
         android:textSize="16sp"
-        android:textColor="@color/accent"
+        android:textColor="@color/colorPrimary"
         android:textStyle="bold" />
 
 </LinearLayout>

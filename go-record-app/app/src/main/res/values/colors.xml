@@ -1,22 +1,39 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="primary">#2E7D32</color>
-    <color name="primary_dark">#1B5E20</color>
-    <color name="primary_light">#4CAF50</color>
-    <color name="accent">#FF6F00</color>
-    <color name="white">#FFFFFF</color>
-    <color name="black">#000000</color>
-    <color name="background">#F5F5F5</color>
+    <!-- 基础 -->
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="background">#F4F6F4</color>
     <color name="surface">#FFFFFF</color>
-    <color name="board_background">#DEB887</color>
-    <color name="board_line">#5D4037</color>
-    <color name="stone_black">#1A1A1A</color>
-    <color name="stone_white">#FAFAFA</color>
-    <color name="stone_shadow">#9E9E9E</color>
+
+    <!-- Material 主题色 -->
+    <color name="colorPrimary">#2E7D32</color>
+    <color name="colorPrimaryVariant">#1B5E20</color>
+    <color name="colorOnPrimary">#FFFFFF</color>
+    <color name="colorSecondary">#00897B</color>
+    <color name="colorSecondaryVariant">#00695C</color>
+    <color name="colorOnSecondary">#FFFFFF</color>
+    <color name="colorSurface">#FFFFFF</color>
+    <color name="colorOnSurface">#212121</color>
+    <color name="colorOnBackground">#212121</color>
+    <color name="colorError">#B00020</color>
+    <color name="colorOnError">#FFFFFF</color>
+
+    <!-- 文本 -->
     <color name="text_primary">#212121</color>
     <color name="text_secondary">#757575</color>
     <color name="divider">#E0E0E0</color>
-    <color name="last_move">#E53935</color>
-    <color name="highlight">#FFD54F</color>
+
+    <!-- 涟漪 -->
+    <color name="ripple_on_primary">#40FFFFFF</color>
+    <color name="ripple_on_secondary">#40FFFFFF</color>
+
+    <!-- 图标 -->
     <color name="icon_color">#FFFFFF</color>
+
+    <!-- 棋盘 -->
+    <color name="board_background">#DEB887</color>
+    <color name="board_frame">#C9A66B</color>
+    <color name="board_line">#5D4037</color>
+    <color name="last_move">#E53935</color>
 </resources>

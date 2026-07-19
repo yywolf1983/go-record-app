@@ -29,4 +29,16 @@
     <string name="load_success">加载成功</string>
     <string name="current_player">当前玩家</string>
     <string name="game_in_progress">游戏进行中</string>
+
+    <!-- 主界面按钮短标签 -->
+    <string name="new_game">新建</string>
+    <string name="load_game">加载</string>
+    <string name="save_game">保存</string>
+    <string name="show_numbers">步数</string>
+    <string name="estimate">估算</string>
+    <string name="place_stones">摆子</string>
+    <string name="mark">标记</string>
+    <string name="comment">注释</string>
+    <string name="branch">分支</string>
+    <string name="pass">虚手</string>
 </resources>

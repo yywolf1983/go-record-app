@@ -1,5 +1,7 @@
 package com.gosgf.app.view;
 
+import com.gosgf.app.R;
+
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -10,6 +12,8 @@ import android.util.AttributeSet;
 import android.view.MotionEvent;
 import android.view.View;
 import android.widget.Toast;
+
+import androidx.core.content.ContextCompat;
 
 import com.gosgf.app.model.GoBoard;
 import com.gosgf.app.model.GoBoard.Position;
@@ -30,6 +34,11 @@ public class BoardView extends View {
     private Paint lastMovePaint;
     private Paint markPaint;
     private Paint branchStonePaint; // 分支虚影画笔
+
+    private int boardWoodColor;
+    private int boardFrameColor;
+    private int boardLineColor;
+    private int lastMoveColor;
 
     private OnBoardTouchListener touchListener;
     private OnBranchSelectListener branchSelectListener;
@@ -95,35 +104,41 @@ public class BoardView extends View {
     }
     
     private void init() {
+        // 缓存主题配色
+        boardWoodColor = ContextCompat.getColor(getContext(), R.color.board_background);
+        boardFrameColor = ContextCompat.getColor(getContext(), R.color.board_frame);
+        boardLineColor = ContextCompat.getColor(getContext(), R.color.board_line);
+        lastMoveColor = ContextCompat.getColor(getContext(), R.color.last_move);
+
         // 初始化画笔
         boardPaint = new Paint();
-        boardPaint.setColor(getResources().getColor(android.R.color.holo_orange_light));
+        boardPaint.setColor(boardWoodColor);
         boardPaint.setStyle(Paint.Style.FILL);
-        
+
         linePaint = new Paint();
-        linePaint.setColor(getResources().getColor(android.R.color.darker_gray));
+        linePaint.setColor(boardLineColor);
         linePaint.setStyle(Paint.Style.STROKE);
         linePaint.setStrokeWidth(2);
-        
+
         blackStonePaint = new Paint();
         blackStonePaint.setColor(Color.BLACK);
         blackStonePaint.setStyle(Paint.Style.FILL);
-        
+
         whiteStonePaint = new Paint();
         whiteStonePaint.setColor(Color.WHITE);
         whiteStonePaint.setStyle(Paint.Style.FILL);
-        
+
         starPaint = new Paint();
-        starPaint.setColor(Color.BLACK);
+        starPaint.setColor(boardLineColor);
         starPaint.setStyle(Paint.Style.FILL);
-        
+
         lastMovePaint = new Paint();
-        lastMovePaint.setColor(Color.RED);
+        lastMovePaint.setColor(lastMoveColor);
         lastMovePaint.setStyle(Paint.Style.STROKE);
         lastMovePaint.setStrokeWidth(3);
-        
+
         markPaint = new Paint();
-        markPaint.setColor(Color.RED);
+        markPaint.setColor(lastMoveColor);
         markPaint.setStyle(Paint.Style.STROKE);
         markPaint.setStrokeWidth(2);
 
@@ -198,6 +213,10 @@ public class BoardView extends View {
         return showMoveNumbers;
     }
     
+    // 棋盘尺寸锁定区间（dp），避免被容器撑大或挤小
+    private static final int MAX_BOARD_DP = 460;
+    private static final int MIN_BOARD_DP = 280;
+
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
         super.onMeasure(widthMeasureSpec, heightMeasureSpec);
@@ -205,6 +224,12 @@ public class BoardView extends View {
         int width = MeasureSpec.getSize(widthMeasureSpec);
         int height = MeasureSpec.getSize(heightMeasureSpec);
         int size = Math.min(width, height);
+
+        float density = getResources().getDisplayMetrics().density;
+        int maxPx = (int) (MAX_BOARD_DP * density);
+        int minPx = (int) (MIN_BOARD_DP * density);
+        if (size > maxPx) size = maxPx;
+        if (size < minPx) size = minPx;
 
         setMeasuredDimension(size, size);
     }
@@ -239,14 +264,29 @@ public class BoardView extends View {
             return;
         }
         
-        // 绘制整个背景（橙色外延）
+        // 绘制外框（木色边框）
         Paint outerPaint = new Paint();
-        outerPaint.setColor(getResources().getColor(android.R.color.holo_orange_light));
+        outerPaint.setColor(boardFrameColor);
         outerPaint.setStyle(Paint.Style.FILL);
         canvas.drawRect(0, 0, getWidth(), getHeight(), outerPaint);
 
+        // 棋盘阴影（伪阴影，增强立体感）
+        Paint shadowPaint = new Paint();
+        shadowPaint.setColor(0x22000000);
+        shadowPaint.setStyle(Paint.Style.FILL);
+        canvas.drawRect(marginLeft + 5, marginTop + 7,
+                marginLeft + boardWidth + 5, marginTop + boardHeight + 7, shadowPaint);
+
         // 绘制棋盘背景（木纹色）
         canvas.drawRect(marginLeft, marginTop, marginLeft + boardWidth, marginTop + boardHeight, boardPaint);
+
+        // 棋盘边框线
+        Paint borderPaint = new Paint();
+        borderPaint.setColor(boardLineColor);
+        borderPaint.setStyle(Paint.Style.STROKE);
+        borderPaint.setStrokeWidth(2);
+        borderPaint.setAntiAlias(true);
+        canvas.drawRect(marginLeft, marginTop, marginLeft + boardWidth, marginTop + boardHeight, borderPaint);
 
         // 绘制棋盘线条
         drawBoardLines(canvas);
