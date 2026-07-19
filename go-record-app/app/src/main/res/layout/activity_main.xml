@@ -18,14 +18,14 @@
         android:orientation="horizontal"
         android:gravity="center_vertical"
         android:paddingHorizontal="6dp"
-        android:layout_marginBottom="4dp">
+        android:layout_marginBottom="2dp">
 
         <TextView
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="@string/app_name"
-            android:textSize="20sp"
+            android:textSize="18sp"
             android:textStyle="bold"
             android:textColor="@color/colorPrimary" />
 
@@ -44,15 +44,15 @@
         android:orientation="vertical"
         android:background="@drawable/bg_card"
         android:elevation="4dp"
-        android:padding="8dp"
-        android:layout_marginBottom="4dp">
+        android:padding="6dp"
+        android:layout_marginBottom="2dp">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:weightSum="5"
-            android:layout_marginBottom="8dp">
+            android:layout_marginBottom="4dp">
 
             <LinearLayout
                 android:layout_width="0dp"
@@ -60,21 +60,21 @@
                 android:layout_weight="1"
                 android:orientation="vertical"
                 android:gravity="center"
-                android:padding="2dp">
+                android:padding="1dp">
                 <ImageButton
                     android:id="@+id/btn_new"
-                    android:layout_width="40dp"
-                    android:layout_height="40dp"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
                     android:background="@drawable/btn_secondary"
                     android:src="@drawable/ic_new"
                     android:scaleType="centerInside"
                     android:contentDescription="@string/new_game"
-                    android:layout_marginBottom="2dp" />
+                    android:layout_marginBottom="0dp" />
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="@string/new_game"
-                    android:textSize="12sp"
+                    android:textSize="10sp"
                     android:textColor="@color/text_secondary" />
             </LinearLayout>
 
@@ -84,21 +84,21 @@
                 android:layout_weight="1"
                 android:orientation="vertical"
                 android:gravity="center"
-                android:padding="2dp">
+                android:padding="1dp">
                 <ImageButton
                     android:id="@+id/btn_load"
-                    android:layout_width="40dp"
-                    android:layout_height="40dp"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
                     android:background="@drawable/btn_secondary"
                     android:src="@drawable/ic_load"
                     android:scaleType="centerInside"
                     android:contentDescription="@string/load_game"
-                    android:layout_marginBottom="2dp" />
+                    android:layout_marginBottom="0dp" />
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="@string/load_game"
-                    android:textSize="12sp"
+                    android:textSize="10sp"
                     android:textColor="@color/text_secondary" />
             </LinearLayout>
 
@@ -108,21 +108,21 @@
                 android:layout_weight="1"
                 android:orientation="vertical"
                 android:gravity="center"
-                android:padding="2dp">
+                android:padding="1dp">
                 <ImageButton
                     android:id="@+id/btn_save"
-                    android:layout_width="40dp"
-                    android:layout_height="40dp"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
                     android:background="@drawable/btn_secondary"
                     android:src="@drawable/ic_save"
                     android:scaleType="centerInside"
                     android:contentDescription="@string/save_game"
-                    android:layout_marginBottom="2dp" />
+                    android:layout_marginBottom="0dp" />
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="@string/save_game"
-                    android:textSize="12sp"
+                    android:textSize="10sp"
                     android:textColor="@color/text_secondary" />
             </LinearLayout>
 
@@ -132,21 +132,21 @@
                 android:layout_weight="1"
                 android:orientation="vertical"
                 android:gravity="center"
-                android:padding="2dp">
+                android:padding="1dp">
                 <ImageButton
                     android:id="@+id/btn_show_numbers"
-                    android:layout_width="40dp"
-                    android:layout_height="40dp"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
                     android:background="@drawable/btn_secondary"
                     android:src="@drawable/ic_number"
                     android:scaleType="centerInside"
                     android:contentDescription="@string/show_numbers"
-                    android:layout_marginBottom="2dp" />
+                    android:layout_marginBottom="0dp" />
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="@string/show_numbers"
-                    android:textSize="12sp"
+                    android:textSize="10sp"
                     android:textColor="@color/text_secondary" />
             </LinearLayout>
 
@@ -156,21 +156,21 @@
                 android:layout_weight="1"
                 android:orientation="vertical"
                 android:gravity="center"
-                android:padding="2dp">
+                android:padding="1dp">
                 <ImageButton
                     android:id="@+id/btn_score"
-                    android:layout_width="40dp"
-                    android:layout_height="40dp"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
                     android:background="@drawable/btn_secondary"
                     android:src="@drawable/ic_score"
                     android:scaleType="centerInside"
                     android:contentDescription="@string/estimate"
-                    android:layout_marginBottom="2dp" />
+                    android:layout_marginBottom="0dp" />
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="@string/estimate"
-                    android:textSize="12sp"
+                    android:textSize="10sp"
                     android:textColor="@color/text_secondary" />
             </LinearLayout>
         </LinearLayout>
@@ -187,22 +187,22 @@
                 android:layout_weight="1"
                 android:orientation="vertical"
                 android:gravity="center"
-                android:padding="2dp">
+                android:padding="1dp">
                 <ImageButton
                     android:id="@+id/btn_place"
-                    android:layout_width="40dp"
-                    android:layout_height="40dp"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
                     android:background="@drawable/btn_secondary"
                     android:src="@drawable/ic_place"
                     android:scaleType="centerInside"
                     android:contentDescription="@string/place_stones"
-                    android:layout_marginBottom="2dp" />
+                    android:layout_marginBottom="0dp" />
                 <TextView
                     android:id="@+id/btn_place_label"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="@string/place_stones"
-                    android:textSize="12sp"
+                    android:textSize="10sp"
                     android:textColor="@color/text_secondary" />
             </LinearLayout>
 
@@ -212,21 +212,21 @@
                 android:layout_weight="1"
                 android:orientation="vertical"
                 android:gravity="center"
-                android:padding="2dp">
+                android:padding="1dp">
                 <ImageButton
                     android:id="@+id/btn_mark"
-                    android:layout_width="40dp"
-                    android:layout_height="40dp"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
                     android:background="@drawable/btn_secondary"
                     android:src="@drawable/ic_mark"
                     android:scaleType="centerInside"
                     android:contentDescription="@string/mark"
-                    android:layout_marginBottom="2dp" />
+                    android:layout_marginBottom="0dp" />
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="@string/mark"
-                    android:textSize="12sp"
+                    android:textSize="10sp"
                     android:textColor="@color/text_secondary" />
             </LinearLayout>
 
@@ -236,21 +236,21 @@
                 android:layout_weight="1"
                 android:orientation="vertical"
                 android:gravity="center"
-                android:padding="2dp">
+                android:padding="1dp">
                 <ImageButton
                     android:id="@+id/btn_comment"
-                    android:layout_width="40dp"
-                    android:layout_height="40dp"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
                     android:background="@drawable/btn_secondary"
                     android:src="@drawable/ic_comment"
                     android:scaleType="centerInside"
                     android:contentDescription="@string/comment"
-                    android:layout_marginBottom="2dp" />
+                    android:layout_marginBottom="0dp" />
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="@string/comment"
-                    android:textSize="12sp"
+                    android:textSize="10sp"
                     android:textColor="@color/text_secondary" />
             </LinearLayout>
 
@@ -260,21 +260,21 @@
                 android:layout_weight="1"
                 android:orientation="vertical"
                 android:gravity="center"
-                android:padding="2dp">
+                android:padding="1dp">
                 <ImageButton
                     android:id="@+id/btn_delete_branch"
-                    android:layout_width="40dp"
-                    android:layout_height="40dp"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
                     android:background="@drawable/btn_secondary"
                     android:src="@drawable/ic_branch"
                     android:scaleType="centerInside"
                     android:contentDescription="@string/branch"
-                    android:layout_marginBottom="2dp" />
+                    android:layout_marginBottom="0dp" />
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="@string/branch"
-                    android:textSize="12sp"
+                    android:textSize="10sp"
                     android:textColor="@color/text_secondary" />
             </LinearLayout>
 
@@ -284,21 +284,21 @@
                 android:layout_weight="1"
                 android:orientation="vertical"
                 android:gravity="center"
-                android:padding="2dp">
+                android:padding="1dp">
                 <ImageButton
                     android:id="@+id/btn_pass"
-                    android:layout_width="40dp"
-                    android:layout_height="40dp"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
                     android:background="@drawable/btn_secondary"
                     android:src="@drawable/ic_pass"
                     android:scaleType="centerInside"
                     android:contentDescription="@string/pass"
-                    android:layout_marginBottom="2dp" />
+                    android:layout_marginBottom="0dp" />
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="@string/pass"
-                    android:textSize="12sp"
+                    android:textSize="10sp"
                     android:textColor="@color/text_secondary" />
             </LinearLayout>
         </LinearLayout>
@@ -353,33 +353,32 @@
                     android:lineSpacingExtra="2dp" />
             </ScrollView>
 
-            <!-- 底部导航：上一步（左）/ 下一步（右），小图标按钮分居两边 -->
+            <!-- 底部导航：上一步 / 下一步，图标按钮并排占满整行 -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:gravity="center_vertical"
+                android:gravity="center"
                 android:layout_marginTop="12dp">
 
                 <ImageButton
                     android:id="@+id/btn_previous"
-                    android:layout_width="44dp"
-                    android:layout_height="44dp"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="8dp"
                     android:background="@drawable/btn_secondary"
                     android:backgroundTint="@null"
                     android:src="@drawable/ic_previous"
                     android:scaleType="centerInside"
                     android:contentDescription="@string/action_previous" />
 
-                <View
-                    android:layout_width="0dp"
-                    android:layout_height="1dp"
-                    android:layout_weight="1" />
-
                 <ImageButton
                     android:id="@+id/btn_next"
-                    android:layout_width="44dp"
-                    android:layout_height="44dp"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1"
+                    android:layout_marginStart="8dp"
                     android:background="@drawable/btn_secondary"
                     android:backgroundTint="@null"
                     android:src="@drawable/ic_next"
