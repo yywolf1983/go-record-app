@@ -367,34 +367,106 @@ public class ScoreEstimator {
     }
 
     /**
-     * 获取目数详细信息
+     * 面积法估算：确定围空(记1目) + 争议/边界点按双方势力归一化分配 + 自动死子扣除
+     * @return {黑分, 白分}
+     */
+    private float[] computeAreaScore() {
+        ensureEstimationCalculated();   // 围空 / 势力 / 死子缓存一并就绪
+
+        int autoDeadBlack = cachedDeadBlackByEstimator != null ? cachedDeadBlackByEstimator.size() : 0;
+        int autoDeadWhite = cachedDeadWhiteByEstimator != null ? cachedDeadWhiteByEstimator.size() : 0;
+
+        float black = Math.max(0, countBlackStones() - autoDeadBlack);
+        float white = Math.max(0, countWhiteStones() - autoDeadWhite) + komi;
+
+        // 确定围空（完全包围的空白连通块）→ 每点记 1 目
+        boolean[] blackTerr = new boolean[BOARD_SIZE * BOARD_SIZE];
+        boolean[] whiteTerr = new boolean[BOARD_SIZE * BOARD_SIZE];
+        if (cachedBlackTerritoryPositions != null) {
+            for (GoBoard.Position p : cachedBlackTerritoryPositions) {
+                blackTerr[p.y * BOARD_SIZE + p.x] = true;
+                black += 1;
+            }
+        }
+        if (cachedWhiteTerritoryPositions != null) {
+            for (GoBoard.Position p : cachedWhiteTerritoryPositions) {
+                whiteTerr[p.y * BOARD_SIZE + p.x] = true;
+                white += 1;
+            }
+        }
+
+        // 争议/边界空白点：按双方「连续势力值」归一化分配（谁近谁多）
+        for (int y = 0; y < BOARD_SIZE; y++) {
+            for (int x = 0; x < BOARD_SIZE; x++) {
+                int idx = y * BOARD_SIZE + x;
+                if (blackTerr[idx] || whiteTerr[idx]) continue;   // 已确定围空不再重复计
+                if (board[y][x] != EMPTY) continue;
+                float bI = influenceValue(x, y, BLACK);
+                float wI = influenceValue(x, y, WHITE);
+                if (bI <= 0 && wI <= 0) continue;                 // 双方都够不着 → 中立不计
+                float total = bI + wI;
+                black += bI / total;
+                white += wI / total;
+            }
+        }
+        return new float[]{black, white};
+    }
+
+    /**
+     * 连续势力值：点 (x,y) 到最近同色棋子（曼哈顿距离 ≤ 2）的强度。
+     * 距离 0/1/2 分别返回 1.5/1.0/0.5，够不着返回 0。用于争议点归属分配。
+     */
+    private float influenceValue(int x, int y, int player) {
+        int maxDist = 2;
+        int best = 99;
+        for (int dy = -maxDist; dy <= maxDist; dy++) {
+            for (int dx = -maxDist; dx <= maxDist; dx++) {
+                int nx = x + dx, ny = y + dy;
+                if (nx < 0 || ny < 0 || nx >= BOARD_SIZE || ny >= BOARD_SIZE) continue;
+                if (board[ny][nx] == player) {
+                    int dist = Math.abs(dx) + Math.abs(dy);
+                    if (dist <= maxDist && dist < best) best = dist;
+                }
+            }
+        }
+        if (best > maxDist) return 0;
+        return (3 - best) * 0.5f;
+    }
+
+    /**
+     * 获取目数详细信息（确定目数 + 势力/死子估算）
      */
     public String getScoreResult() {
-        ensureEstimationCalculated();
+        float[] area = computeAreaScore();
+        float blackEst = area[0];
+        float whiteEst = area[1];
 
         int blackStones = countBlackStones();
         int whiteStones = countWhiteStones();
         int blackTerritory = countBlackTerritory();
         int whiteTerritory = countWhiteTerritory();
-        float blackTotal = blackStones + blackTerritory;
-        float whiteTotal = whiteStones + whiteTerritory + komi;
-        float diff = blackTotal - whiteTotal;
+        int blackConfirmed = blackStones + blackTerritory;
+        int whiteConfirmed = whiteStones + whiteTerritory;
 
         StringBuilder sb = new StringBuilder();
-        sb.append(String.format("黑 %.1f 目", blackTotal));
-        sb.append(String.format(" 白 %.1f 目", whiteTotal));
-        sb.append("\n");
-        sb.append(String.format("棋子: 黑%d 白%d\n", blackStones, whiteStones));
-        sb.append(String.format("围空: 黑%d 白%d\n", blackTerritory, whiteTerritory));
-        sb.append("贴目: ").append(komi).append("\n");
+        sb.append("【确定目数】\n");
+        sb.append("黑：").append(blackStones).append(" 子 + ").append(blackTerritory).append(" 目\n");
+        sb.append("白：").append(whiteStones).append(" 子 + ").append(whiteTerritory).append(" 目 + 贴目 ").append(komi).append("\n");
+        int cd = blackConfirmed - whiteConfirmed;
+        sb.append("→ 黑 ").append(cd >= 0 ? "+" : "").append(cd).append(" 目\n\n");
 
-        if (diff > 0) {
-            sb.append(String.format("黑棋领先 %.1f 目", diff));
-        } else if (diff < 0) {
-            sb.append(String.format("白棋领先 %.1f 目", Math.abs(diff)));
+        sb.append("【含势力 / 死子估算】\n");
+        sb.append("黑：约 ").append(String.format("%.1f", blackEst)).append(" 目\n");
+        sb.append("白：约 ").append(String.format("%.1f", whiteEst)).append(" 目\n");
+        float ed = blackEst - whiteEst;
+        if (ed > 0.05f) {
+            sb.append("黑棋领先约 ").append(String.format("%.1f", ed)).append(" 目");
+        } else if (ed < -0.05f) {
+            sb.append("白棋领先约 ").append(String.format("%.1f", -ed)).append(" 目");
         } else {
-            sb.append("局势持平");
+            sb.append("双方基本持平");
         }
+        sb.append("\n\n提示：先「标记死子」可让估算更准");
         return sb.toString();
     }
 
