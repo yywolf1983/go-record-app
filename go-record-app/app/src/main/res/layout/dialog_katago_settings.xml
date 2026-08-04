@@ -14,6 +14,40 @@
         android:textColor="@color/text_primary"
         android:layout_marginBottom="12dp" />
 
+    <!-- 模型文件（从任意目录选择，不再内置 APK） -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/katago_model"
+        android:textSize="13sp"
+        android:textColor="@color/text_secondary" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginTop="2dp">
+
+        <TextView
+            android:id="@+id/tv_model_path"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="middle"
+            android:singleLine="true"
+            android:textSize="12sp"
+            android:textColor="@color/text_primary" />
+
+        <Button
+            android:id="@+id/btn_model_select"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:text="@string/katago_model_select"
+            android:textSize="12sp" />
+    </LinearLayout>
+
     <!-- 分析强度 -->
     <TextView
         android:layout_width="match_parent"

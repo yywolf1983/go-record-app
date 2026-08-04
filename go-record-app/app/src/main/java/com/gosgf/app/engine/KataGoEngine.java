@@ -31,7 +31,6 @@ public class KataGoEngine {
 
     private static final String TAG = "KataGoEngine";
 
-    private static final String MODEL_ASSET = "kata1-b20c256x2-s5303129600-d1228401921.bin.gz";
     private static final String CFG_ASSET = "gtp_android.cfg";
 
     // KataGo GTP 列字母表（大写、跳过 'I'，对应 x = 0..18）
@@ -86,13 +85,21 @@ public class KataGoEngine {
     private int idCounter = 0;
 
     /**
-     * 准备引擎：把 assets 中的模型权重与配置文件解压到应用私有目录。
-     * 引擎库 libkatago.so 已随 APK 加载，此处只负责模型/配置落盘。
+     * 准备引擎。
+     * 模型权重由调用方从任意目录提供（modelPath，应用私有目录内的副本），
+     * 不再内置在 APK assets 中；配置文件(cfg)仍从 assets 解压到应用私有目录。
+     * @param context   用于解压 cfg
+     * @param modelPath 用户选定的模型文件绝对路径
      * @return 错误信息；null 表示准备就绪。
      */
-    public String prepare(Context context) {
-        modelFile = extractAsset(context, MODEL_ASSET, "model.bin.gz");
-        if (modelFile == null) return "模型文件缺失，请确认已放入 assets/" + MODEL_ASSET;
+    public String prepare(Context context, String modelPath) {
+        if (modelPath == null || modelPath.isEmpty()) {
+            return "尚未选择模型文件，请在 KataGo 设置中选择（可放在任意目录）";
+        }
+        modelFile = new File(modelPath);
+        if (!modelFile.exists() || !modelFile.canRead()) {
+            return "模型文件不可读：" + modelPath;
+        }
 
         cfgFile = extractAsset(context, CFG_ASSET, "gtp_android.cfg");
         if (cfgFile == null) return "配置文件缺失，请确认已放入 assets/" + CFG_ASSET;

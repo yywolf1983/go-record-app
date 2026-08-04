@@ -49,6 +49,10 @@
     <string name="katago_komi">贴目</string>
     <string name="katago_threads">分析线程数</string>
     <string name="katago_settings_hint">长按「实时分析」可随时调整。修改后下一次分析自动生效。</string>
+    <string name="katago_model">模型文件</string>
+    <string name="katago_model_select">选择模型…</string>
+    <string name="katago_model_not_set">未选择（请在任意目录选择 .bin.gz 模型）</string>
+    <string name="katago_model_copied">模型已复制到应用目录</string>
     <string name="menu_engine_live_off">实时分析</string>
     <string name="menu_engine_live_on">分析中</string>
     <string name="engine_title">KataGo 分析</string>

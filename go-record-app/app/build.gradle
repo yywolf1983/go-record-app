@@ -43,6 +43,11 @@ android {
         }
     }
 
+    // 模型权重(.bin.gz)已压缩，禁止 aapt 二次压缩（避免压缩大文件异常导致文件未进 APK）
+    aaptOptions {
+        noCompress "gz", "bin.gz", "cfg"
+    }
+
     externalNativeBuild {
         cmake {
             // KataGo 源码树中的库构建脚本（CMakeLists.txt 软链到 CMakeLists_library.txt）

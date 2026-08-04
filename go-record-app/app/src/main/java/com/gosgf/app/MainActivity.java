@@ -38,6 +38,7 @@ import com.gosgf.app.view.BoardView;
 import com.gosgf.app.view.BoardView.AnalysisMark;
 
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -77,6 +78,7 @@ import java.util.List;
     // Activity Result Launchers
     private ActivityResultLauncher<Intent> loadFileLauncher;
     private ActivityResultLauncher<Intent> saveFileLauncher;
+    private ActivityResultLauncher<Intent> modelPickerLauncher;
 
     // KataGo 引擎（随包内置）
     private KataGoEngine katagoEngine;
@@ -96,6 +98,7 @@ import java.util.List;
     private static final String PREF_TOP_N = "katago_top_n";
     private static final String PREF_KOMI = "katago_komi";
     private static final String PREF_THREADS = "katago_threads";
+    private static final String PREF_MODEL_PATH = "katago_model_path"; // 用户选定的模型绝对路径
     // 分析强度档位 → 实际 maxVisits
     private static final int[] STRENGTH_VISITS = {200, 400, 800, 1500, 3000};
     private static final String[] KOMI_VALUES = {"7.5", "6.5", "0.5", "5.5", "0.0"};
@@ -219,8 +222,55 @@ import java.util.List;
             }
         );
 
-        // KataGo 引擎为随包内置，无需 SAF 目录选择
+        // 模型文件选择器：从任意目录选择 .bin.gz 模型（KataGo 权重不再内置 APK）
+        modelPickerLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            result -> {
+                if (result.getResultCode() == RESULT_OK) {
+                    Intent data = result.getData();
+                    if (data != null && data.getData() != null) {
+                        importModelFile(data.getData());
+                    }
+                }
+            }
+        );
     }
+
+    /** 从用户选择的 URI 复制模型到应用私有目录，并保存绝对路径 */
+    private void importModelFile(android.net.Uri uri) {
+        try {
+            // 持久化权限，便于后续访问（即使应用重启）
+            final int takeFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION;
+            try {
+                getContentResolver().takePersistableUriPermission(uri, takeFlags);
+            } catch (SecurityException ignored) {}
+
+            File dest = new File(getFilesDir(), "katago_model.bin.gz");
+            try (java.io.InputStream in = getContentResolver().openInputStream(uri);
+                 java.io.FileOutputStream fos = new java.io.FileOutputStream(dest)) {
+                if (in == null) throw new java.io.IOException("无法打开模型文件");
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = in.read(buf)) > 0) fos.write(buf, 0, n);
+            }
+            katagoPrefs.edit().putString(PREF_MODEL_PATH, dest.getAbsolutePath()).apply();
+            Toast.makeText(this, R.string.katago_model_copied, Toast.LENGTH_SHORT).show();
+            // 模型变更：重新准备引擎（下次分析使用新模型）
+            if (katagoEngine != null) katagoEngine.closeEngine();
+            enginePrepared = false;
+            // 若分析已开启，立即用新模型重分析
+            if (liveAnalysis) runAnalysis();
+            // 刷新设置页上的路径显示
+            if (modelPathText != null) {
+                modelPathText.setText(dest.getName());
+            }
+        } catch (Exception e) {
+            Log_e("导入模型失败", e);
+            Toast.makeText(this, "导入模型失败：" + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private TextView modelPathText; // 设置页中显示当前模型路径的 TextView
     
     private void initButtons() {
         // 工具栏按钮
@@ -310,6 +360,24 @@ import java.util.List;
         TextView tvTopN = view.findViewById(R.id.tv_topn);
         Spinner spinnerKomi = view.findViewById(R.id.spinner_komi);
         Spinner spinnerThreads = view.findViewById(R.id.spinner_threads);
+
+        // 模型文件（从任意目录选择，不再内置 APK）
+        TextView tvModelPath = view.findViewById(R.id.tv_model_path);
+        modelPathText = tvModelPath;
+        String curModel = katagoPrefs.getString(PREF_MODEL_PATH, "");
+        if (curModel.isEmpty()) {
+            tvModelPath.setText(R.string.katago_model_not_set);
+        } else {
+            tvModelPath.setText(new File(curModel).getName());
+        }
+        view.findViewById(R.id.btn_model_select).setOnClickListener(v -> {
+            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
+            intent.setType("application/octet-stream");
+            intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{
+                "application/octet-stream", "application/gzip", "application/x-gzip"});
+            modelPickerLauncher.launch(intent);
+        });
 
         // 分析强度
         int strengthIdx = katagoPrefs.getInt(PREF_MAX_VISITS, 1);
@@ -437,7 +505,8 @@ import java.util.List;
             try {
                 if (katagoEngine == null) katagoEngine = new KataGoEngine();
                 if (!enginePrepared) {
-                    String err = katagoEngine.prepare(this);
+                    String modelPath = katagoPrefs.getString(PREF_MODEL_PATH, "");
+                    String err = katagoEngine.prepare(this, modelPath);
                     if (err != null) {
                         runOnUiThread(() -> Toast.makeText(this, "引擎准备失败：" + err,
                                 Toast.LENGTH_LONG).show());
