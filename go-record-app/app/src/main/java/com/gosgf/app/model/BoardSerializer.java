@@ -24,7 +24,8 @@ public class BoardSerializer {
             String blackPlayer,
             String whitePlayer,
             String result,
-            String date) {
+            String date,
+            int currentStep) {
 
         StringBuilder sb = new StringBuilder();
 
@@ -67,7 +68,10 @@ public class BoardSerializer {
         sb.append(escapeString(blackPlayer != null ? blackPlayer : "")).append("|");
         sb.append(escapeString(whitePlayer != null ? whitePlayer : "")).append("|");
         sb.append(escapeString(result != null ? result : "")).append("|");
-        sb.append(escapeString(date != null ? date : ""));
+        sb.append(escapeString(date != null ? date : "")).append("|");
+
+        // 当前步数（光标）：切后台/退出后恢复走到第几手
+        sb.append(currentStep);
 
         return sb.toString();
     }
@@ -94,6 +98,7 @@ public class BoardSerializer {
     public static class DeserializeResult {
         public int[][] board;
         public int currentPlayer;
+        public int currentStep = 0;
         public java.util.List<GoBoard.Move> moveHistory;
         public int handicap;
         public java.util.List<GoBoard.Position> blackHandicapStones;
@@ -130,7 +135,7 @@ public class BoardSerializer {
             offset = 0;
         }
 
-        int requiredParts = offset + 10;
+        int requiredParts = offset + 11;
         if (parts.length < requiredParts) return result;
 
         try {
@@ -209,6 +214,16 @@ public class BoardSerializer {
             result.whitePlayer = parts[offset + 7].isEmpty() ? "白方" : unescapeString(parts[offset + 7]);
             result.result = unescapeString(parts[offset + 8]);
             result.date = unescapeString(parts[offset + 9]);
+
+            // 当前步数（光标）
+            result.currentStep = 0;
+            if (!parts[offset + 10].isEmpty()) {
+                try {
+                    result.currentStep = Integer.parseInt(parts[offset + 10]);
+                } catch (NumberFormatException ignored) {
+                }
+            }
+
             result.success = true;
 
         } catch (Exception e) {

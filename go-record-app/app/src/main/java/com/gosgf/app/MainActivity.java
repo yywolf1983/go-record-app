@@ -99,6 +99,9 @@ import java.util.List;
         // 初始化视图
         boardView = findViewById(R.id.boardView);
         boardView.setBoard(board);
+        // 恢复“显示步数”开关状态
+        boolean showNumbers = getPreferences(Context.MODE_PRIVATE).getBoolean("show_move_numbers", false);
+        if (showNumbers) boardView.toggleMoveNumbers();
         boardView.setOnBoardTouchListener(this::onBoardTouch);
 
         // 初始化注释显示
@@ -865,6 +868,10 @@ import java.util.List;
         super.onPause();
         // 保存棋局到SharedPreferences，以便应用被杀死后也能恢复
         saveGameStateToPreferences();
+        // 保存“显示步数”开关状态
+        getPreferences(Context.MODE_PRIVATE).edit()
+            .putBoolean("show_move_numbers", boardView.isShowMoveNumbers())
+            .apply();
     }
     
     @Override

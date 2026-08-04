@@ -737,9 +737,11 @@ public class GoBoard {
     // ==================== BoardSerializer 委托 ====================
 
     public String serialize() {
+        int currentStep = getCurrentMoveIndex();
+        if (currentStep < 0) currentStep = moveHistory.size();
         return BoardSerializer.serialize(board, currentPlayer, moveHistory,
                 handicapMgr.getHandicap(), handicapMgr.getBlackHandicapStones(),
-                handicapMgr.getWhiteHandicapStones(), blackPlayer, whitePlayer, result, date);
+                handicapMgr.getWhiteHandicapStones(), blackPlayer, whitePlayer, result, date, currentStep);
     }
 
     public void deserialize(String s) {
@@ -776,6 +778,13 @@ public class GoBoard {
                         break;
                     }
                 }
+            }
+            // 恢复光标到退出前所在步数（限制在合法范围内）
+            int step = state.currentStep;
+            if (step > 0) {
+                int maxStep = moveHistory.size();
+                if (step > maxStep) step = maxStep;
+                gameTree.goToStep(step);
             }
         } else {
             gameTree.setRoot(new SGFNode(null));
