@@ -1,0 +1,27 @@
+{
+  "buildFiles": [
+    "/Users/yy/github/KataGo/cpp/CMakeLists.txt"
+  ],
+  "cleanCommandsComponents": [
+    [
+      "/Users/yy/Downloads/android-sdk/cmake/3.22.1/bin/ninja",
+      "-C",
+      "/Users/yy/pro-test/gosgf2/go-record-app/app/.cxx/RelWithDebInfo/6e6g6r4s/x86_64",
+      "clean"
+    ]
+  ],
+  "buildTargetsCommandComponents": [
+    "/Users/yy/Downloads/android-sdk/cmake/3.22.1/bin/ninja",
+    "-C",
+    "/Users/yy/pro-test/gosgf2/go-record-app/app/.cxx/RelWithDebInfo/6e6g6r4s/x86_64",
+    "{LIST_OF_TARGETS_TO_BUILD}"
+  ],
+  "libraries": {
+    "katago::@6890427a1f51a3e7e1df": {
+      "artifactName": "katago",
+      "abi": "x86_64",
+      "output": "/Users/yy/pro-test/gosgf2/go-record-app/app/build/intermediates/cxx/RelWithDebInfo/6e6g6r4s/obj/x86_64/libkatago.so",
+      "runtimeFiles": []
+    }
+  }
+}

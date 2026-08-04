@@ -1,0 +1,22 @@
+                        -H/Users/yy/github/KataGo/cpp
+-DCMAKE_SYSTEM_NAME=Android
+-DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+-DCMAKE_SYSTEM_VERSION=24
+-DANDROID_PLATFORM=android-24
+-DANDROID_ABI=x86_64
+-DCMAKE_ANDROID_ARCH_ABI=x86_64
+-DANDROID_NDK=/Users/yy/Downloads/android-ndk/NDK
+-DCMAKE_ANDROID_NDK=/Users/yy/Downloads/android-ndk/NDK
+-DCMAKE_TOOLCHAIN_FILE=/Users/yy/Downloads/android-ndk/NDK/build/cmake/android.toolchain.cmake
+-DCMAKE_MAKE_PROGRAM=/Users/yy/Downloads/android-sdk/cmake/3.22.1/bin/ninja
+-DCMAKE_CXX_FLAGS=-std=c++17
+-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=/Users/yy/pro-test/gosgf2/go-record-app/app/build/intermediates/cxx/RelWithDebInfo/6e6g6r4s/obj/x86_64
+-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=/Users/yy/pro-test/gosgf2/go-record-app/app/build/intermediates/cxx/RelWithDebInfo/6e6g6r4s/obj/x86_64
+-B/Users/yy/pro-test/gosgf2/go-record-app/app/.cxx/RelWithDebInfo/6e6g6r4s/x86_64
+-GNinja
+-DUSE_BACKEND=EIGEN
+-DNO_GIT_REVISION=1
+-DEIGEN3_INCLUDE_DIRS=/opt/homebrew/include/eigen3
+-DCMAKE_BUILD_TYPE=RelWithDebInfo
+                        Build command args: []
+                        Version: 2
