@@ -145,3 +145,11 @@ build/
 # 模型权重（来自 /Users/yy/Downloads/kata1-*.bin.gz）
 go-record-app/app/src/main/assets/*.bin.gz
 # 注：gtp_android.cfg 已入库，无需复制；若缺失见文档重新生成
+
+# ============================================================
+# Android NDK / CMake 原生构建缓存（机器相关，禁止入库）
+# 含 .ninja_deps/.ninja_log/configure_fingerprint.bin 等增量状态，
+# 入库会导致换机/重配时 CMake 增量构建冲突而编译失败
+# ============================================================
+go-record-app/app/.cxx/
+go-record-app/app/.externalNativeBuild/

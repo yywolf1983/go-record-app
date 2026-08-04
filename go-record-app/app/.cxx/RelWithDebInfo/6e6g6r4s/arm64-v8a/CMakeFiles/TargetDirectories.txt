@@ -1,3 +1,0 @@
-/Users/yy/pro-test/gosgf2/go-record-app/app/.cxx/RelWithDebInfo/6e6g6r4s/arm64-v8a/CMakeFiles/katago.dir
-/Users/yy/pro-test/gosgf2/go-record-app/app/.cxx/RelWithDebInfo/6e6g6r4s/arm64-v8a/CMakeFiles/edit_cache.dir
-/Users/yy/pro-test/gosgf2/go-record-app/app/.cxx/RelWithDebInfo/6e6g6r4s/arm64-v8a/CMakeFiles/rebuild_cache.dir
