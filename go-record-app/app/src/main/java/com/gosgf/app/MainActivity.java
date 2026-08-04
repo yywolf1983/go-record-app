@@ -1,17 +1,25 @@
 package com.gosgf.app;
 
+import android.animation.ArgbEvaluator;
+import android.animation.ValueAnimator;
 import android.content.Context;
 import android.content.Intent;
+import android.content.res.ColorStateList;
+import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
+import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.ImageButton;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.SeekBar;
+import android.content.SharedPreferences;
+import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -20,11 +28,14 @@ import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 
+import com.gosgf.app.engine.KataGoEngine;
+import com.gosgf.app.engine.KataGoEngine.AnalysisResult;
 import com.gosgf.app.model.GoBoard;
 import com.gosgf.app.model.GoBoard.Move;
 import com.gosgf.app.util.SGFConverter;
 import com.gosgf.app.util.SGFParser;
 import com.gosgf.app.view.BoardView;
+import com.gosgf.app.view.BoardView.AnalysisMark;
 
 import java.io.BufferedReader;
 import java.io.FileOutputStream;
@@ -56,6 +67,7 @@ import java.util.List;
     private ImageButton btnDeleteBranch;
     private ImageButton btnScore;
     private ImageButton btnShowNumbers;
+    private Button btnEngineAnalyze;
 
     // 摆子模式状态
     private boolean isPlaceMode = false;
@@ -65,6 +77,29 @@ import java.util.List;
     // Activity Result Launchers
     private ActivityResultLauncher<Intent> loadFileLauncher;
     private ActivityResultLauncher<Intent> saveFileLauncher;
+
+    // KataGo 引擎（随包内置）
+    private KataGoEngine katagoEngine;
+    private boolean enginePrepared = false;
+
+    // Sabaki 风格：实时分析开关（开启后在棋盘上持续显示最优几手）
+    private boolean liveAnalysis = false;
+    private boolean engineBusy = false;
+    private ValueAnimator liveBtnAnim;
+    private Runnable liveTextRunnable;
+    private int liveDot = 0;
+    private final Handler liveTextHandler = new Handler(Looper.getMainLooper());
+
+    // KataGo 设置（长按「实时分析」按钮弹出设置页，改动后下一次分析自动生效）
+    private SharedPreferences katagoPrefs;
+    private static final String PREF_MAX_VISITS = "katago_max_visits"; // 0..4 → 映射访问次数
+    private static final String PREF_TOP_N = "katago_top_n";
+    private static final String PREF_KOMI = "katago_komi";
+    private static final String PREF_THREADS = "katago_threads";
+    // 分析强度档位 → 实际 maxVisits
+    private static final int[] STRENGTH_VISITS = {200, 400, 800, 1500, 3000};
+    private static final String[] KOMI_VALUES = {"7.5", "6.5", "0.5", "5.5", "0.0"};
+    private static final Integer[] THREAD_VALUES = {1, 2, 4};
     
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -183,6 +218,8 @@ import java.util.List;
                 }
             }
         );
+
+        // KataGo 引擎为随包内置，无需 SAF 目录选择
     }
     
     private void initButtons() {
@@ -231,6 +268,223 @@ import java.util.List;
         btnDeleteBranch.setOnClickListener(v -> onDeleteBranch());
         btnScore.setOnClickListener(v -> onScore());
         btnShowNumbers.setOnClickListener(v -> onShowNumbers());
+
+        // KataGo 引擎按钮（实时分析开关，开启后首次自动在后台初始化引擎）
+        btnEngineAnalyze = findViewById(R.id.btn_engine_analyze);
+        // 点击：Sabaki 风格的实时分析开关；长按：弹出 KataGo 设置页
+        btnEngineAnalyze.setOnClickListener(v -> toggleLiveAnalysis());
+        btnEngineAnalyze.setOnLongClickListener(v -> { showKataGoSettings(); return true; });
+
+        katagoPrefs = getSharedPreferences("katago_settings", MODE_PRIVATE);
+    }
+
+    private void toggleLiveAnalysis() {
+        liveAnalysis = !liveAnalysis;
+        if (liveAnalysis) {
+            btnEngineAnalyze.setText(R.string.menu_engine_live_on);
+            // 引擎未就绪时由 runAnalysis 在后台线程统一初始化，避免并发双重初始化崩溃
+            Toast.makeText(this, R.string.engine_analyzing, Toast.LENGTH_SHORT).show();
+            runAnalysis();
+        } else {
+            cancelLiveAnalysis();
+        }
+    }
+
+    /** 取消分析：清除棋盘标记并复位按钮（不自动分析） */
+    private void cancelLiveAnalysis() {
+        if (!liveAnalysis) return;
+        liveAnalysis = false;
+        stopLiveAnim();
+        btnEngineAnalyze.setText(R.string.menu_engine_live_off);
+        boardView.clearAnalysisMarks();
+        boardView.refresh();
+    }
+
+    /** 长按「实时分析」弹出 KataGo 设置页（仅主要设置项） */
+    private void showKataGoSettings() {
+        View view = getLayoutInflater().inflate(R.layout.dialog_katago_settings, null);
+
+        SeekBar seekStrength = view.findViewById(R.id.seek_strength);
+        TextView tvStrength = view.findViewById(R.id.tv_strength);
+        SeekBar seekTopN = view.findViewById(R.id.seek_topn);
+        TextView tvTopN = view.findViewById(R.id.tv_topn);
+        Spinner spinnerKomi = view.findViewById(R.id.spinner_komi);
+        Spinner spinnerThreads = view.findViewById(R.id.spinner_threads);
+
+        // 分析强度
+        int strengthIdx = katagoPrefs.getInt(PREF_MAX_VISITS, 1);
+        seekStrength.setProgress(strengthIdx);
+        tvStrength.setText(String.valueOf(STRENGTH_VISITS[strengthIdx]));
+        seekStrength.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar s, int p, boolean fromUser) {
+                tvStrength.setText(String.valueOf(STRENGTH_VISITS[p]));
+            }
+            @Override public void onStartTrackingTouch(SeekBar s) {}
+            @Override public void onStopTrackingTouch(SeekBar s) {}
+        });
+
+        // 显示步数
+        int topN = katagoPrefs.getInt(PREF_TOP_N, 5);
+        seekTopN.setProgress(topN);
+        tvTopN.setText(String.valueOf(topN));
+        seekTopN.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar s, int p, boolean fromUser) {
+                tvTopN.setText(String.valueOf(p));
+            }
+            @Override public void onStartTrackingTouch(SeekBar s) {}
+            @Override public void onStopTrackingTouch(SeekBar s) {}
+        });
+
+        // 贴目
+        ArrayAdapter<String> komiAdapter = new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_item, KOMI_VALUES);
+        komiAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        spinnerKomi.setAdapter(komiAdapter);
+        String curKomi = katagoPrefs.getString(PREF_KOMI, "7.5");
+        for (int i = 0; i < KOMI_VALUES.length; i++) {
+            if (KOMI_VALUES[i].equals(curKomi)) { spinnerKomi.setSelection(i); break; }
+        }
+
+        // 线程数
+        ArrayAdapter<Integer> threadAdapter = new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_item, THREAD_VALUES);
+        threadAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        spinnerThreads.setAdapter(threadAdapter);
+        int curThreads = katagoPrefs.getInt(PREF_THREADS, 2);
+        for (int i = 0; i < THREAD_VALUES.length; i++) {
+            if (THREAD_VALUES[i] == curThreads) { spinnerThreads.setSelection(i); break; }
+        }
+
+        new AlertDialog.Builder(this)
+                .setView(view)
+                .setPositiveButton(android.R.string.ok, (d, w) -> {
+                    katagoPrefs.edit()
+                            .putInt(PREF_MAX_VISITS, seekStrength.getProgress())
+                            .putInt(PREF_TOP_N, seekTopN.getProgress())
+                            .putString(PREF_KOMI, KOMI_VALUES[spinnerKomi.getSelectedItemPosition()])
+                            .putInt(PREF_THREADS, THREAD_VALUES[spinnerThreads.getSelectedItemPosition()])
+                            .apply();
+                    // 设置变更后立即重新分析当前局面（若实时分析已开启）
+                    if (liveAnalysis) runAnalysis();
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    /** 分析进行时按钮变色 + "分析中..." 文字动画 */
+    private void startLiveAnim() {
+        if (liveBtnAnim != null) return; // 已在动画中
+        // 文字动画：分析中 / 分析中. / 分析中.. / 分析中...
+        liveDot = 0;
+        liveTextRunnable = new Runnable() {
+            @Override
+            public void run() {
+                if (!liveAnalysis) return;
+                liveDot = (liveDot + 1) % 4;
+                StringBuilder s = new StringBuilder("分析中");
+                for (int i = 0; i < liveDot; i++) s.append(".");
+                btnEngineAnalyze.setText(s.toString());
+                liveTextHandler.postDelayed(this, 400);
+            }
+        };
+        liveTextHandler.post(liveTextRunnable);
+        // 背景色在橙色高亮与绿色之间呼吸脉冲
+        int colorHot = Color.parseColor("#FF7A1A");
+        int colorIdle = Color.parseColor("#2E7D32");
+        liveBtnAnim = ValueAnimator.ofObject(new ArgbEvaluator(), colorHot, colorIdle);
+        liveBtnAnim.setDuration(700);
+        liveBtnAnim.setRepeatMode(ValueAnimator.REVERSE);
+        liveBtnAnim.setRepeatCount(ValueAnimator.INFINITE);
+        liveBtnAnim.addUpdateListener(a ->
+                btnEngineAnalyze.setBackgroundTintList(
+                        ColorStateList.valueOf((int) a.getAnimatedValue())));
+        liveBtnAnim.start();
+    }
+
+    /** 停止动画，恢复静态绿色按钮（必须在主线程执行，因涉及 View 动画） */
+    private void stopLiveAnim() {
+        liveTextHandler.removeCallbacks(liveTextRunnable);
+        liveTextRunnable = null;
+        runOnUiThread(() -> {
+            if (liveBtnAnim != null) {
+                liveBtnAnim.cancel();
+                liveBtnAnim = null;
+            }
+            btnEngineAnalyze.setBackgroundTintList(null);
+            btnEngineAnalyze.setText(R.string.menu_engine_live_on);
+        });
+    }
+
+    /**
+     * Sabaki 风格：后台分析当前局面，仅在棋盘上用圆圈+胜率标出最优几手，不弹窗。
+     * 落子 / 上一步 / 下一步 / 加载棋谱后都会自动调用，实现"不断给出最优步子"。
+     */
+    private void runAnalysis() {
+        if (!liveAnalysis) {
+            return;
+        }
+        if (engineBusy) {
+            // 引擎忙时忽略本次请求（不自动排队，需用户再次点击）
+            return;
+        }
+        if (board == null || board.getGameTree() == null) return;
+
+        engineBusy = true;
+        startLiveAnim();
+
+        new Thread(() -> {
+            List<AnalysisMark> marks = null;
+            try {
+                if (katagoEngine == null) katagoEngine = new KataGoEngine();
+                if (!enginePrepared) {
+                    String err = katagoEngine.prepare(this);
+                    if (err != null) {
+                        runOnUiThread(() -> Toast.makeText(this, "引擎准备失败：" + err,
+                                Toast.LENGTH_LONG).show());
+                        return;
+                    }
+                    enginePrepared = true;
+                }
+
+                // 直接取当前真实棋盘状态发给引擎（避免走子历史重建错位）
+                int[][] boardState = board.getBoard();
+                int boardSize = boardState.length; // 棋盘边长（通常 19）
+                int who = board.getCurrentPlayer();
+
+                // 读取 KataGo 设置（长按按钮设置，下一次分析自动生效）
+                int strengthIdx = katagoPrefs.getInt(PREF_MAX_VISITS, 1);
+                int maxVisits = STRENGTH_VISITS[strengthIdx];
+                int topN = katagoPrefs.getInt(PREF_TOP_N, 5);
+                double komi = Double.parseDouble(katagoPrefs.getString(PREF_KOMI, "7.5"));
+                int threads = katagoPrefs.getInt(PREF_THREADS, 2);
+
+                AnalysisResult result = katagoEngine.analyze(boardState, boardSize, maxVisits, who, komi, threads);
+
+                // 只取最优 N 手，像 Sabaki 一样只在棋盘上给出最优的几个步子
+                marks = new ArrayList<>();
+                int top = Math.min(topN, result.moves.size());
+                for (int i = 0; i < top; i++) {
+                    KataGoEngine.AnalysisMove m = result.moves.get(i);
+                    marks.add(new AnalysisMark(m.x, m.y, m.winrate, m.order));
+                }
+            } catch (Exception e) {
+                Log_e("KataGo分析异常", e);
+            } finally {
+                // 拿到新结果后再替换标记，避免分析期间棋盘空白（实时、无闪烁）
+                final List<AnalysisMark> finalMarks = marks;
+                runOnUiThread(() -> {
+                    if (finalMarks != null) boardView.setAnalysisMarks(finalMarks);
+                    else boardView.clearAnalysisMarks();
+                });
+                engineBusy = false;
+                // 单次分析结束（不再自动补齐，避免落子自动分析），恢复按钮
+                if (liveAnalysis) stopLiveAnim();
+            }
+        }).start();
+    }
+
+    private void Log_e(String msg, Exception e) {
+        android.util.Log.e("MainActivity", msg, e);
     }
     
     private void onBoardTouch(int x, int y) {
@@ -274,6 +528,9 @@ import java.util.List;
         } else {
             commentText.setText("");
         }
+
+        // 局面已变化：若正在分析，则清除旧标记并复位（不再自动分析，需用户再次点击）
+        cancelLiveAnalysis();
     }
 
     private void onPlace() {

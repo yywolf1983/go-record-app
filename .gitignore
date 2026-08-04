@@ -136,3 +136,12 @@ build/
 **/.yarn/build-state.yml
 **/.yarn/install-state.gz
 **/.pnp.*
+
+# ============================================================
+# KataGo 内置资源（大文件不入库，见 go-record-app/KATAGO_LOAD.md）
+# libkatago.so 由 NDK 编译自动生成并打包进 APK，无需手动放置/忽略
+# 仅模型权重大文件不入库，需手动复制到 assets/
+# ============================================================
+# 模型权重（来自 /Users/yy/Downloads/kata1-*.bin.gz）
+go-record-app/app/src/main/assets/*.bin.gz
+# 注：gtp_android.cfg 已入库，无需复制；若缺失见文档重新生成

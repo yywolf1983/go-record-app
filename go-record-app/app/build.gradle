@@ -7,6 +7,9 @@ android {
     namespace 'com.gosgf.app'
     compileSdk 34
 
+    // 使用本地已下载的 NDK（由 local.properties 的 ndk.dir 指定，避免 SDK Manager 下载）
+    ndkVersion "27.3.13750724"
+
     defaultConfig {
         applicationId "com.gosgf.app"
         minSdk 24
@@ -15,6 +18,38 @@ android {
         versionName "1.0"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        // 仅打包我们提供的两种 ABI
+        ndk {
+            abiFilters 'arm64-v8a', 'x86_64'
+        }
+
+        // 直接编译 KataGo 源码（含自写 JNI 封装）为 libkatago.so
+        externalNativeBuild {
+            cmake {
+                arguments '-DUSE_BACKEND=EIGEN',
+                          '-DNO_GIT_REVISION=1',
+                          '-DEIGEN3_INCLUDE_DIRS=/opt/homebrew/include/eigen3',
+                          '-DCMAKE_BUILD_TYPE=RelWithDebInfo'
+                cppFlags '-std=c++17'
+            }
+        }
+    }
+
+    // assets 为默认路径；libkatago.so 由 externalNativeBuild 自动打包，无需 jniLibs
+    sourceSets {
+        main {
+            assets.srcDirs = ['src/main/assets']
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            // KataGo 源码树中的库构建脚本（CMakeLists.txt 软链到 CMakeLists_library.txt）
+            // 直接产出 libkatago.so，含自写 JNI 封装与引擎全部代码
+            path '/Users/yy/github/KataGo/cpp/CMakeLists.txt'
+            version '3.22.1'
+        }
     }
 
     buildTypes {

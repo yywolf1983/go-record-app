@@ -57,6 +57,9 @@ public class BoardView extends View {
     private boolean isDeadStoneMarkMode = false;
     private int deadStonePlayer = 0; // 标记死子的玩家
 
+    // 引擎分析候选点（KataGo 推荐落点）
+    private java.util.List<AnalysisMark> analysisMarks = new java.util.ArrayList<>();
+
     // 领地估算模式
     private boolean isTerritoryMode = false;
 
@@ -310,6 +313,9 @@ public class BoardView extends View {
 
         // 绘制标记
         drawMarks(canvas);
+
+        // 绘制引擎分析候选点
+        drawAnalysisMarks(canvas);
 
         // 绘制坐标
         drawCoordinates(canvas);
@@ -572,6 +578,105 @@ public class BoardView extends View {
                 // 绘制X形状
                 canvas.drawLine(px - s, py - s, px + s, py + s, deadStonePaint);
                 canvas.drawLine(px + s, py - s, px - s, py + s, deadStonePaint);
+            }
+        }
+    }
+
+    private void drawAnalysisMarks(Canvas canvas) {
+        if (analysisMarks == null || analysisMarks.isEmpty()) return;
+        float r = cellSize / 2 - 1;
+
+        // 最佳着法：醒目亮绿实心圆 + 白色粗体描边胜率（高对比、清晰可见）
+        final int BEST_FILL = Color.parseColor("#00C853"); // 亮绿
+        final int BEST_RING = Color.parseColor("#007A33"); // 深绿环
+
+        Paint bestFillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        bestFillPaint.setColor(BEST_FILL);
+        bestFillPaint.setStyle(Paint.Style.FILL);
+
+        Paint bestRingPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        bestRingPaint.setColor(BEST_RING);
+        bestRingPaint.setStyle(Paint.Style.STROKE);
+        bestRingPaint.setStrokeWidth(3.5f);
+
+        Paint bestTextPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        bestTextPaint.setColor(Color.WHITE);
+        bestTextPaint.setTextAlign(Paint.Align.CENTER);
+        bestTextPaint.setTextSize(cellSize * 0.40f);
+        bestTextPaint.setTypeface(Typeface.DEFAULT_BOLD);
+
+        Paint bestStrokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        bestStrokePaint.setColor(BEST_RING);
+        bestStrokePaint.setTextAlign(Paint.Align.CENTER);
+        bestStrokePaint.setTextSize(cellSize * 0.40f);
+        bestStrokePaint.setTypeface(Typeface.DEFAULT_BOLD);
+        bestStrokePaint.setStyle(Paint.Style.STROKE);
+        bestStrokePaint.setStrokeWidth(4);
+
+        // 其它候选：亮蓝空心粗环 + 白底序号 + 圈外胜率
+        final int OTHER_RING = Color.parseColor("#1E88E5"); // 亮蓝
+        Paint ringPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        ringPaint.setColor(OTHER_RING);
+        ringPaint.setStyle(Paint.Style.STROKE);
+        ringPaint.setStrokeWidth(3f);
+
+        Paint ordTextPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        ordTextPaint.setColor(OTHER_RING);
+        ordTextPaint.setTextAlign(Paint.Align.CENTER);
+        ordTextPaint.setTextSize(cellSize * 0.34f);
+        ordTextPaint.setTypeface(Typeface.DEFAULT_BOLD);
+
+        Paint ordStrokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        ordStrokePaint.setColor(Color.WHITE);
+        ordStrokePaint.setTextAlign(Paint.Align.CENTER);
+        ordStrokePaint.setTextSize(cellSize * 0.34f);
+        ordStrokePaint.setTypeface(Typeface.DEFAULT_BOLD);
+        ordStrokePaint.setStyle(Paint.Style.STROKE);
+        ordStrokePaint.setStrokeWidth(3.5f);
+
+        Paint wrTextPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        wrTextPaint.setColor(OTHER_RING);
+        wrTextPaint.setTextAlign(Paint.Align.CENTER);
+        wrTextPaint.setTextSize(cellSize * 0.26f);
+        wrTextPaint.setTypeface(Typeface.DEFAULT_BOLD);
+
+        Paint wrStrokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        wrStrokePaint.setColor(Color.WHITE);
+        wrStrokePaint.setTextAlign(Paint.Align.CENTER);
+        wrStrokePaint.setTextSize(cellSize * 0.26f);
+        wrStrokePaint.setStyle(Paint.Style.STROKE);
+        wrStrokePaint.setStrokeWidth(3);
+
+        for (AnalysisMark m : analysisMarks) {
+            if (m.x < 0 || m.y < 0) continue; // 跳过 pass
+            float px = marginLeft + m.x * cellSize;
+            float py = marginTop + m.y * cellSize;
+            boolean best = (m.order == 0);
+
+            if (best) {
+                // 实心亮绿圆 + 深绿外环，醒目
+                canvas.drawCircle(px, py, cellSize * 0.32f, bestFillPaint);
+                canvas.drawCircle(px, py, r, bestRingPaint);
+                // 胜率：白字 + 深绿描边，任意背景均清晰
+                String label = (int) Math.round(m.winrate * 100) + "%";
+                Paint.FontMetrics fm = bestTextPaint.getFontMetrics();
+                float off = (fm.descent - fm.ascent) / 2 - fm.descent;
+                canvas.drawText(label, px, py + off, bestStrokePaint);
+                canvas.drawText(label, px, py + off, bestTextPaint);
+            } else {
+                // 亮蓝空心粗环
+                canvas.drawCircle(px, py, r, ringPaint);
+                // 序号：圈内白描边蓝字
+                String ord = String.valueOf(m.order + 1);
+                Paint.FontMetrics ofm = ordTextPaint.getFontMetrics();
+                float ooff = (ofm.descent - ofm.ascent) / 2 - ofm.descent;
+                canvas.drawText(ord, px, py + ooff, ordStrokePaint);
+                canvas.drawText(ord, px, py + ooff, ordTextPaint);
+                // 胜率：圈外上方白描边蓝字
+                String wr = (int) Math.round(m.winrate * 100) + "%";
+                float wy = py - r - cellSize * 0.18f;
+                canvas.drawText(wr, px, wy, wrStrokePaint);
+                canvas.drawText(wr, px, wy, wrTextPaint);
             }
         }
     }
@@ -893,6 +998,33 @@ public class BoardView extends View {
     // 获取死子标记模式状态
     public boolean isDeadStoneMarkMode() {
         return isDeadStoneMarkMode;
+    }
+
+    // 设置引擎分析候选点（x,y 为棋盘坐标，-1 表示 pass 跳过绘制）
+    public void setAnalysisMarks(java.util.List<AnalysisMark> marks) {
+        this.analysisMarks = marks != null ? marks : new java.util.ArrayList<>();
+        invalidate();
+    }
+
+    // 清除引擎分析标记
+    public void clearAnalysisMarks() {
+        analysisMarks.clear();
+        invalidate();
+    }
+
+    /** 引擎分析候选点数据 */
+    public static class AnalysisMark {
+        public int x;
+        public int y;
+        public double winrate; // 0-1
+        public int order;      // 0 = 最佳
+
+        public AnalysisMark(int x, int y, double winrate, int order) {
+            this.x = x;
+            this.y = y;
+            this.winrate = winrate;
+            this.order = order;
+        }
     }
 
     // 重绘棋盘

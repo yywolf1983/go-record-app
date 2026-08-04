@@ -25,7 +25,8 @@ public class BoardSerializer {
             String whitePlayer,
             String result,
             String date,
-            int currentStep) {
+            int currentStep,
+            String gameTreeBlob) {
 
         StringBuilder sb = new StringBuilder();
 
@@ -71,24 +72,31 @@ public class BoardSerializer {
         sb.append(escapeString(date != null ? date : "")).append("|");
 
         // 当前步数（光标）：切后台/退出后恢复走到第几手
-        sb.append(currentStep);
+        sb.append(currentStep).append("|");
+
+        // 完整游戏树（含变着分支/注释/光标节点 id）；旧存档为空
+        // blob 自身包含 | , ; 分隔符，必须整体转义，否则 split("\\|") 会截断树片段
+        sb.append(escapeString(gameTreeBlob != null ? gameTreeBlob : ""));
 
         return sb.toString();
     }
 
-    private static String escapeString(String str) {
+    // 注意：外层分隔符为 '|' 和 ';'，所以转义后【不能残留】这些字符本身，
+    // 否则 deserialize 的 split("\\|") / split(";") 会把字段（尤其是游戏树 blob）
+    // 错误切开。因此 | ; , 都转成不含竖线/分号的占位（\V \S \C）。
+    static String escapeString(String str) {
         if (str == null) return "";
         return str.replace("\\", "\\\\")
-                  .replace("|", "\\|")
-                  .replace(";", "\\;")
-                  .replace(",", "\\,");
+                  .replace("|", "\\V")
+                  .replace(";", "\\S")
+                  .replace(",", "\\C");
     }
 
-    private static String unescapeString(String str) {
+    static String unescapeString(String str) {
         if (str == null) return "";
-        return str.replace("\\,", ",")
-                  .replace("\\;", ";")
-                  .replace("\\|", "|")
+        return str.replace("\\C", ",")
+                  .replace("\\S", ";")
+                  .replace("\\V", "|")
                   .replace("\\\\", "\\");
     }
 
@@ -99,6 +107,7 @@ public class BoardSerializer {
         public int[][] board;
         public int currentPlayer;
         public int currentStep = 0;
+        public String gameTreeBlob = "";   // 完整游戏树片段（可能为空=旧格式）
         public java.util.List<GoBoard.Move> moveHistory;
         public int handicap;
         public java.util.List<GoBoard.Position> blackHandicapStones;
@@ -135,7 +144,7 @@ public class BoardSerializer {
             offset = 0;
         }
 
-        int requiredParts = offset + 11;
+        int requiredParts = offset + 12;
         if (parts.length < requiredParts) return result;
 
         try {
@@ -223,6 +232,9 @@ public class BoardSerializer {
                 } catch (NumberFormatException ignored) {
                 }
             }
+
+            // 完整游戏树片段（可能为空=旧格式）；需先 unescape 还原内部 | , ; 分隔符
+            result.gameTreeBlob = (offset + 11 < parts.length) ? unescapeString(parts[offset + 11]) : "";
 
             result.success = true;
 

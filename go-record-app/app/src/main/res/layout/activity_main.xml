@@ -353,7 +353,7 @@
                     android:lineSpacingExtra="2dp" />
             </ScrollView>
 
-            <!-- 底部导航：上一步 / 下一步，图标按钮并排占满整行 -->
+            <!-- 底部导航：上一步 / 实时分析 / 下一步 -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -366,19 +366,31 @@
                     android:layout_width="0dp"
                     android:layout_height="40dp"
                     android:layout_weight="1"
-                    android:layout_marginEnd="8dp"
+                    android:layout_marginEnd="6dp"
                     android:background="@drawable/btn_secondary"
                     android:backgroundTint="@null"
                     android:src="@drawable/ic_previous"
                     android:scaleType="centerInside"
                     android:contentDescription="@string/action_previous" />
 
+                <Button
+                    android:id="@+id/btn_engine_analyze"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1.3"
+                    android:layout_marginHorizontal="6dp"
+                    android:background="@drawable/btn_primary"
+                    android:text="@string/menu_engine_live_off"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:textColor="@android:color/white" />
+
                 <ImageButton
                     android:id="@+id/btn_next"
                     android:layout_width="0dp"
                     android:layout_height="40dp"
                     android:layout_weight="1"
-                    android:layout_marginStart="8dp"
+                    android:layout_marginStart="6dp"
                     android:background="@drawable/btn_secondary"
                     android:backgroundTint="@null"
                     android:src="@drawable/ic_next"

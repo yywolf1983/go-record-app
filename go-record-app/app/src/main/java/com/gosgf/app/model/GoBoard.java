@@ -739,9 +739,179 @@ public class GoBoard {
     public String serialize() {
         int currentStep = getCurrentMoveIndex();
         if (currentStep < 0) currentStep = moveHistory.size();
+        String treeBlob = serializeGameTree();
         return BoardSerializer.serialize(board, currentPlayer, moveHistory,
                 handicapMgr.getHandicap(), handicapMgr.getBlackHandicapStones(),
-                handicapMgr.getWhiteHandicapStones(), blackPlayer, whitePlayer, result, date, currentStep);
+                handicapMgr.getWhiteHandicapStones(), blackPlayer, whitePlayer, result, date, currentStep, treeBlob);
+    }
+
+    /**
+     * 序列化完整游戏树（含变着分支、注释、光标节点 id）。
+     * 格式：T|<节点数>|<光标节点id>|<节点>;...
+     * 节点：id,父id,兄弟序号,x,y,player,<注释长度>,<转义后注释>
+     */
+    private String serializeGameTree() {
+        if (gameTree == null || gameTree.getRoot() == null) return "";
+        java.util.Map<GoBoard.SGFNode, Integer> idMap = new java.util.HashMap<>();
+        java.util.List<GoBoard.SGFNode> order = new java.util.ArrayList<>();
+        int[] counter = {0};
+        assignTreeIds(gameTree.getRoot(), idMap, order, counter);
+
+        int currentId = -1;
+        GoBoard.SGFNode cur = gameTree.getCurrentNode();
+        if (cur != null && idMap.containsKey(cur)) currentId = idMap.get(cur);
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("T|").append(order.size()).append("|").append(currentId).append("|");
+        for (GoBoard.SGFNode n : order) {
+            int id = idMap.get(n);
+            int pid = (n.parent != null) ? idMap.get(n.parent) : -1;
+            int branch = (n.parent != null) ? n.parent.children.indexOf(n) : 0;
+            int x = (n.move != null) ? n.move.x : -1;
+            int y = (n.move != null) ? n.move.y : -1;
+            int player = (n.move != null) ? n.move.player : 0;
+            String comment = (n.comment != null) ? n.comment : "";
+            sb.append(id).append(',').append(pid).append(',').append(branch).append(',')
+              .append(x).append(',').append(y).append(',').append(player).append(',')
+              .append(comment.length()).append(',')
+              .append(BoardSerializer.escapeString(comment)).append(';');
+        }
+        return sb.toString();
+    }
+
+    private void assignTreeIds(GoBoard.SGFNode node,
+                               java.util.Map<GoBoard.SGFNode, Integer> idMap,
+                               java.util.List<GoBoard.SGFNode> order,
+                               int[] counter) {
+        idMap.put(node, counter[0]++);
+        order.add(node);
+        for (GoBoard.SGFNode c : node.children) assignTreeIds(c, idMap, order, counter);
+    }
+
+    /**
+     * 从序列化片段重建完整游戏树（含变着分支、注释），并把光标定位到原节点。
+     * @return 是否成功重建
+     */
+    private boolean applyGameTreeBlob(String blob, int fallbackStep) {
+        try {
+            String[] sections = blob.split("\\|", 4);
+            if (sections.length < 4) return false;
+            int count = Integer.parseInt(sections[1]);
+            int currentId = Integer.parseInt(sections[2]);
+            String nodesStr = sections[3];
+
+            java.util.Map<Integer, GoBoard.SGFNode> byId = new java.util.HashMap<>();
+            java.util.Map<Integer, Integer> pidOf = new java.util.HashMap<>();
+            java.util.Map<Integer, Integer> branchOf = new java.util.HashMap<>();
+
+            for (String ns : nodesStr.split(";")) {
+                if (ns.isEmpty()) continue;
+                String[] f = ns.split(",", 7);   // 前7段：id,pid,branch,x,y,player,clen+comment
+                if (f.length < 7) continue;
+                int id = Integer.parseInt(f[0]);
+                int pid = Integer.parseInt(f[1]);
+                int branch = Integer.parseInt(f[2]);
+                int x = Integer.parseInt(f[3]);
+                int y = Integer.parseInt(f[4]);
+                int player = Integer.parseInt(f[5]);
+                int comma = f[6].indexOf(',');
+                if (comma < 0) continue;
+                int clen = Integer.parseInt(f[6].substring(0, comma));
+                String commentRaw = f[6].substring(comma + 1);
+                String comment = BoardSerializer.unescapeString(commentRaw);
+                if (comment.length() > clen) comment = comment.substring(0, clen);
+
+                GoBoard.SGFNode n = new GoBoard.SGFNode(null);
+                if (x >= 0 && y >= 0 && player != 0) {
+                    n.move = new GoBoard.Move(x, y, player);
+                }
+                n.comment = comment;
+                byId.put(id, n);
+                pidOf.put(id, pid);
+                branchOf.put(id, branch);
+            }
+            if (!byId.containsKey(0)) return false;
+
+            // 按兄弟序号挂到父节点（先占位，后紧凑化去 null）
+            for (Integer id : byId.keySet()) {
+                GoBoard.SGFNode n = byId.get(id);
+                int pid = pidOf.get(id);
+                if (pid >= 0 && byId.containsKey(pid)) {
+                    GoBoard.SGFNode p = byId.get(pid);
+                    int branch = branchOf.get(id);
+                    while (p.children.size() <= branch) p.children.add(null);
+                    p.children.set(branch, n);
+                    n.parent = p;
+                }
+            }
+
+            // 紧凑化：每个父节点的 children 按 branch 升序重排，去掉 null 占位，
+            // 保证 children.get(0) 始终指向主分支（branch=0），后续遍历不会因 null 中断
+            for (GoBoard.SGFNode p : byId.values()) {
+                if (p.children.isEmpty()) continue;
+                java.util.List<GoBoard.SGFNode> real = new java.util.ArrayList<>();
+                for (GoBoard.SGFNode c : p.children) {
+                    if (c != null) real.add(c);
+                }
+                // 按 branch 序号升序排序，确保主分支位于 index 0
+                real.sort((a, b) -> branchOfNode(branchOf, a, byId) - branchOfNode(branchOf, b, byId));
+                p.children.clear();
+                p.children.addAll(real);
+            }
+
+            gameTree.setRoot(byId.get(0));
+
+            if (currentId >= 0 && byId.containsKey(currentId)) {
+                gameTree.setCurrentNode(byId.get(currentId));
+            } else {
+                // 光标 id 缺失时退回到按步数定位
+                int step = fallbackStep;
+                if (step > 0) {
+                    int maxStep = countMovesToNode(lastLeaf(byId.get(0)));
+                    if (step > maxStep) step = maxStep;
+                    gameTree.setCurrentNode(byId.get(0));
+                    for (int i = 0; i < step; i++) {
+                        if (gameTree.getCurrentNode().children.isEmpty()) break;
+                        gameTree.setCurrentNode(gameTree.getCurrentNode().children.get(0));
+                    }
+                } else {
+                    gameTree.setCurrentNode(byId.get(0));
+                }
+            }
+
+            rebuildBoardFromTree();
+
+            // 重建主分支 moveHistory（children[0] 链）
+            moveHistory.clear();
+            moveHistory.addAll(gameTree.collectPathMoves());
+            currentMoveIndex = moveHistory.size() - 1;
+            lastMove = (currentMoveIndex >= 0) ? moveHistory.get(currentMoveIndex) : null;
+                koMove = null;
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private GoBoard.SGFNode lastLeaf(GoBoard.SGFNode node) {
+        while (node != null && !node.children.isEmpty()
+                && node.children.get(0) != null) {
+            node = node.children.get(0);
+        }
+        return node;
+    }
+
+    /** 通过 byId 反查节点 id，再从 branchOf 取其兄弟序号（用于紧凑化排序） */
+    private int branchOfNode(java.util.Map<Integer, Integer> branchOf,
+                             GoBoard.SGFNode node,
+                             java.util.Map<Integer, GoBoard.SGFNode> byId) {
+        for (java.util.Map.Entry<Integer, GoBoard.SGFNode> e : byId.entrySet()) {
+            if (e.getValue() == node) {
+                Integer b = branchOf.get(e.getKey());
+                return (b != null) ? b : 0;
+            }
+        }
+        return 0;
     }
 
     public void deserialize(String s) {
@@ -765,10 +935,13 @@ public class GoBoard {
         lastMove = (currentMoveIndex >= 0) ? moveHistory.get(currentMoveIndex) : null;
         koMove = null;
 
-        // 重建游戏树
-        if (!moveHistory.isEmpty()) {
+        // 优先用完整游戏树片段重建（含变着分支，光标精确恢复）
+        if (state.gameTreeBlob != null && state.gameTreeBlob.startsWith("T|")
+                && applyGameTreeBlob(state.gameTreeBlob, state.currentStep)) {
+            // 已在 applyGameTreeBlob 内完成树重建与光标定位
+        } else if (!moveHistory.isEmpty()) {
+            // 旧格式 / 无树片段：线性重建到末尾，再定位光标
             buildGameTreeFromHistory();
-            // 沿路径前进到末尾
             gameTree.setCurrentNode(gameTree.getRoot());
             for (Move m : moveHistory) {
                 for (SGFNode child : gameTree.getCurrentNode().children) {
@@ -779,13 +952,13 @@ public class GoBoard {
                     }
                 }
             }
-            // 恢复光标到退出前所在步数（限制在合法范围内）
             int step = state.currentStep;
             if (step > 0) {
                 int maxStep = moveHistory.size();
                 if (step > maxStep) step = maxStep;
                 gameTree.goToStep(step);
             }
+            rebuildBoardFromTree();
         } else {
             gameTree.setRoot(new SGFNode(null));
         }

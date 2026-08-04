@@ -41,4 +41,21 @@
     <string name="comment">注释</string>
     <string name="branch">分支</string>
     <string name="pass">虚手</string>
+    <string name="menu_engine">KataGo</string>
+    <string name="menu_engine_analyze">分析局面</string>
+    <string name="katago_settings_title">KataGo 设置</string>
+    <string name="katago_strength">分析强度（访问次数）</string>
+    <string name="katago_top_n">显示最优步数</string>
+    <string name="katago_komi">贴目</string>
+    <string name="katago_threads">分析线程数</string>
+    <string name="katago_settings_hint">长按「实时分析」可随时调整。修改后下一次分析自动生效。</string>
+    <string name="menu_engine_live_off">实时分析</string>
+    <string name="menu_engine_live_on">分析中</string>
+    <string name="engine_title">KataGo 分析</string>
+    <string name="engine_please_select">请先加载或新建一局棋谱</string>
+    <string name="engine_analyzing">分析中…</string>
+    <string name="engine_winrate">当前胜率(B)</string>
+    <string name="engine_scorelead">领先目数</string>
+    <string name="engine_best">最佳</string>
+    <string name="engine_visit">访问</string>
 </resources>
