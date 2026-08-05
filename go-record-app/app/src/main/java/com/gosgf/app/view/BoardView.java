@@ -602,40 +602,44 @@ public class BoardView extends View {
         Paint bestTextPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         bestTextPaint.setColor(Color.WHITE);
         bestTextPaint.setTextAlign(Paint.Align.CENTER);
-        bestTextPaint.setTextSize(cellSize * 0.40f);
+        bestTextPaint.setTextSize(cellSize * 0.62f);
         bestTextPaint.setTypeface(Typeface.DEFAULT_BOLD);
 
         Paint bestStrokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         bestStrokePaint.setColor(BEST_RING);
         bestStrokePaint.setTextAlign(Paint.Align.CENTER);
-        bestStrokePaint.setTextSize(cellSize * 0.40f);
+        bestStrokePaint.setTextSize(cellSize * 0.62f);
         bestStrokePaint.setTypeface(Typeface.DEFAULT_BOLD);
         bestStrokePaint.setStyle(Paint.Style.STROKE);
         bestStrokePaint.setStrokeWidth(4);
 
-        // 其它候选：亮蓝空心粗环 + 白底序号 + 圈外胜率
-        final int OTHER_RING = Color.parseColor("#1E88E5"); // 亮蓝
+        // 其它候选：轻微色差环（蓝→青→靛→紫），按排名区分，圈内白色描边百分比
+        final int[] OTHER_RING_COLORS = {
+                Color.parseColor("#1E88E5"), // 蓝
+                Color.parseColor("#00ACC1"), // 青
+                Color.parseColor("#3949AB"), // 靛
+                Color.parseColor("#7E57C2"), // 紫
+                Color.parseColor("#00897B"), // 蓝绿
+        };
         Paint ringPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        ringPaint.setColor(OTHER_RING);
         ringPaint.setStyle(Paint.Style.STROKE);
-        ringPaint.setStrokeWidth(3f);
+        ringPaint.setStrokeWidth(3.5f);
 
         Paint ordTextPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        ordTextPaint.setColor(OTHER_RING);
         ordTextPaint.setTextAlign(Paint.Align.CENTER);
-        ordTextPaint.setTextSize(cellSize * 0.34f);
+        ordTextPaint.setTextSize(cellSize * 0.50f);
         ordTextPaint.setTypeface(Typeface.DEFAULT_BOLD);
 
         Paint ordStrokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         ordStrokePaint.setColor(Color.WHITE);
         ordStrokePaint.setTextAlign(Paint.Align.CENTER);
-        ordStrokePaint.setTextSize(cellSize * 0.34f);
+        ordStrokePaint.setTextSize(cellSize * 0.50f);
         ordStrokePaint.setTypeface(Typeface.DEFAULT_BOLD);
         ordStrokePaint.setStyle(Paint.Style.STROKE);
-        ordStrokePaint.setStrokeWidth(3.5f);
+        ordStrokePaint.setStrokeWidth(4.5f);
 
         Paint wrTextPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        wrTextPaint.setColor(OTHER_RING);
+        wrTextPaint.setColor(OTHER_RING_COLORS[0]);
         wrTextPaint.setTextAlign(Paint.Align.CENTER);
         wrTextPaint.setTextSize(cellSize * 0.26f);
         wrTextPaint.setTypeface(Typeface.DEFAULT_BOLD);
@@ -664,19 +668,19 @@ public class BoardView extends View {
                 canvas.drawText(label, px, py + off, bestStrokePaint);
                 canvas.drawText(label, px, py + off, bestTextPaint);
             } else {
-                // 亮蓝空心粗环
+                // 按排名取轻微色差的环色（蓝→青→靛→紫→蓝绿）
+                int otherRing = OTHER_RING_COLORS[
+                        Math.max(0, Math.min(m.order - 1, OTHER_RING_COLORS.length - 1))];
+                ringPaint.setColor(otherRing);
+                ordTextPaint.setColor(otherRing);
+                // 空心粗环
                 canvas.drawCircle(px, py, r, ringPaint);
-                // 序号：圈内白描边蓝字
-                String ord = String.valueOf(m.order + 1);
+                // 只显示胜率百分比（不显示序号）：圈内白描边彩字百分比
+                String wr = (int) Math.round(m.winrate * 100) + "%";
                 Paint.FontMetrics ofm = ordTextPaint.getFontMetrics();
                 float ooff = (ofm.descent - ofm.ascent) / 2 - ofm.descent;
-                canvas.drawText(ord, px, py + ooff, ordStrokePaint);
-                canvas.drawText(ord, px, py + ooff, ordTextPaint);
-                // 胜率：圈外上方白描边蓝字
-                String wr = (int) Math.round(m.winrate * 100) + "%";
-                float wy = py - r - cellSize * 0.18f;
-                canvas.drawText(wr, px, wy, wrStrokePaint);
-                canvas.drawText(wr, px, wy, wrTextPaint);
+                canvas.drawText(wr, px, py + ooff, ordStrokePaint);
+                canvas.drawText(wr, px, py + ooff, ordTextPaint);
             }
         }
     }

@@ -19,14 +19,13 @@ android {
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
-        // 仅打包我们提供的两种 ABI
-        ndk {
-            abiFilters 'arm64-v8a', 'x86_64'
-        }
-
         // 直接编译 KataGo 源码（含自写 JNI 封装）为 libkatago.so
         externalNativeBuild {
             cmake {
+                // KataGo 后端：EIGEN=纯CPU(稳定兼容, 默认)；OPENCL=GPU加速(仅部分设备可用, 见下)
+                // 注意：Mali GPU 的 libOpenCL.so 实为 libGLES_mali 别名，强依赖 vendor 专有库链，
+                // 应用 namespace 无法加载 → 崩溃。故默认 EIGEN。若要 GPU，需高通 Adreno 等设备，
+                // 并改为 OPENCL 且把该设备的 libOpenCL.so 放入 jniLibs/<abi>/。
                 arguments '-DUSE_BACKEND=EIGEN',
                           '-DNO_GIT_REVISION=1',
                           '-DEIGEN3_INCLUDE_DIRS=/opt/homebrew/include/eigen3',
@@ -61,6 +60,20 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    // 按 ABI 分别产出独立 APK：arm(真机默认) / x86(模拟器)。
+    // 分开编译可显著缩短 KataGo native 构建时间，且安装包更小。
+    flavorDimensions "abi"
+    productFlavors {
+        arm {
+            dimension "abi"
+            ndk { abiFilters 'arm64-v8a' }
+        }
+        x86 {
+            dimension "abi"
+            ndk { abiFilters 'x86_64' }
         }
     }
     compileOptions {

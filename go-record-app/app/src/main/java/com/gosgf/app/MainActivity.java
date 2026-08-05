@@ -87,6 +87,7 @@ import java.util.List;
     // Sabaki 风格：实时分析开关（开启后在棋盘上持续显示最优几手）
     private boolean liveAnalysis = false;
     private boolean engineBusy = false;
+    private int analysisToken = 0; // 每次分析+1，棋盘变化时取消旧分析使其结果作废
     private ValueAnimator liveBtnAnim;
     private Runnable liveTextRunnable;
     private int liveDot = 0;
@@ -99,10 +100,10 @@ import java.util.List;
     private static final String PREF_KOMI = "katago_komi";
     private static final String PREF_THREADS = "katago_threads";
     private static final String PREF_MODEL_PATH = "katago_model_path"; // 用户选定的模型绝对路径
-    // 分析强度档位 → 实际 maxVisits
-    private static final int[] STRENGTH_VISITS = {200, 400, 800, 1500, 3000};
+    // 分析强度档位 → 实际 maxVisits（EIGEN 纯 CPU 下档位越低越快；AGM H6 等低端机用低档）
+    private static final int[] STRENGTH_VISITS = {50, 100, 200, 400, 800};
     private static final String[] KOMI_VALUES = {"7.5", "6.5", "0.5", "5.5", "0.0"};
-    private static final Integer[] THREAD_VALUES = {1, 2, 4};
+    private static final Integer[] THREAD_VALUES = {1, 2, 4, 6, 8};
     
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -245,7 +246,18 @@ import java.util.List;
                 getContentResolver().takePersistableUriPermission(uri, takeFlags);
             } catch (SecurityException ignored) {}
 
-            File dest = new File(getFilesDir(), "katago_model.bin.gz");
+            // 目标文件名按源扩展名自适应：.txt.gz / .bin.gz 等，保证 KataGo 按内容正确识别
+            String srcName = (uri != null && uri.getLastPathSegment() != null)
+                    ? uri.getLastPathSegment() : "";
+            String destName;
+            if (srcName.toLowerCase().endsWith(".txt.gz")) {
+                destName = "katago_model.txt.gz";
+            } else if (srcName.toLowerCase().endsWith(".bin.gz")) {
+                destName = "katago_model.bin.gz";
+            } else {
+                destName = "katago_model.bin.gz";
+            }
+            File dest = new File(getFilesDir(), destName);
             try (java.io.InputStream in = getContentResolver().openInputStream(uri);
                  java.io.FileOutputStream fos = new java.io.FileOutputStream(dest)) {
                 if (in == null) throw new java.io.IOException("无法打开模型文件");
@@ -331,8 +343,7 @@ import java.util.List;
     private void toggleLiveAnalysis() {
         liveAnalysis = !liveAnalysis;
         if (liveAnalysis) {
-            btnEngineAnalyze.setText(R.string.menu_engine_live_on);
-            // 引擎未就绪时由 runAnalysis 在后台线程统一初始化，避免并发双重初始化崩溃
+            // "分析中"动画由 runAnalysis 在 engineBusy 期间驱动，这里不预设文案
             Toast.makeText(this, R.string.engine_analyzing, Toast.LENGTH_SHORT).show();
             runAnalysis();
         } else {
@@ -340,12 +351,13 @@ import java.util.List;
         }
     }
 
-    /** 取消分析：清除棋盘标记并复位按钮（不自动分析） */
+    /** 取消分析：清除棋盘标记并复位按钮（棋盘变化后调用，确保提示消失） */
     private void cancelLiveAnalysis() {
-        if (!liveAnalysis) return;
+        // 无条件中止：使进行中的旧分析作废，避免旧结果回写新棋盘
+        analysisToken++;
         liveAnalysis = false;
         stopLiveAnim();
-        btnEngineAnalyze.setText(R.string.menu_engine_live_off);
+        if (btnEngineAnalyze != null) btnEngineAnalyze.setText(R.string.menu_engine_live_off);
         boardView.clearAnalysisMarks();
         boardView.refresh();
     }
@@ -373,13 +385,13 @@ import java.util.List;
         view.findViewById(R.id.btn_model_select).setOnClickListener(v -> {
             Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
             intent.addCategory(Intent.CATEGORY_OPENABLE);
-            intent.setType("application/octet-stream");
-            intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{
-                "application/octet-stream", "application/gzip", "application/x-gzip"});
+            // 模型可能是 .bin.gz 或 .txt.gz 等多种 gzip 格式，用 */* 显示所有文件，
+            // 避免系统按扩展名/MIME 过滤掉 .txt.gz 这类文件。
+            intent.setType("*/*");
             modelPickerLauncher.launch(intent);
         });
 
-        // 分析强度
+        // 分析强度（默认低档 100 visits：EIGEN 纯 CPU 下保证 AGM H6 等低端机可秒级返回）
         int strengthIdx = katagoPrefs.getInt(PREF_MAX_VISITS, 1);
         seekStrength.setProgress(strengthIdx);
         tvStrength.setText(String.valueOf(STRENGTH_VISITS[strengthIdx]));
@@ -418,7 +430,7 @@ import java.util.List;
                 android.R.layout.simple_spinner_item, THREAD_VALUES);
         threadAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         spinnerThreads.setAdapter(threadAdapter);
-        int curThreads = katagoPrefs.getInt(PREF_THREADS, 2);
+        int curThreads = katagoPrefs.getInt(PREF_THREADS, 4);
         for (int i = 0; i < THREAD_VALUES.length; i++) {
             if (THREAD_VALUES[i] == curThreads) { spinnerThreads.setSelection(i); break; }
         }
@@ -442,16 +454,18 @@ import java.util.List;
     /** 分析进行时按钮变色 + "分析中..." 文字动画 */
     private void startLiveAnim() {
         if (liveBtnAnim != null) return; // 已在动画中
+        // 只有后台分析进程真正在运行时才启动动画（否则不显示"分析中"）
+        if (!engineBusy) return;
         // 文字动画：分析中 / 分析中. / 分析中.. / 分析中...
         liveDot = 0;
         liveTextRunnable = new Runnable() {
             @Override
             public void run() {
-                if (!liveAnalysis) return;
+                if (!engineBusy) return; // 后台进程不在运行则停止动画
                 liveDot = (liveDot + 1) % 4;
                 StringBuilder s = new StringBuilder("分析中");
                 for (int i = 0; i < liveDot; i++) s.append(".");
-                btnEngineAnalyze.setText(s.toString());
+                if (btnEngineAnalyze != null) btnEngineAnalyze.setText(s.toString());
                 liveTextHandler.postDelayed(this, 400);
             }
         };
@@ -463,9 +477,11 @@ import java.util.List;
         liveBtnAnim.setDuration(700);
         liveBtnAnim.setRepeatMode(ValueAnimator.REVERSE);
         liveBtnAnim.setRepeatCount(ValueAnimator.INFINITE);
-        liveBtnAnim.addUpdateListener(a ->
+        liveBtnAnim.addUpdateListener(a -> {
+            if (btnEngineAnalyze != null)
                 btnEngineAnalyze.setBackgroundTintList(
-                        ColorStateList.valueOf((int) a.getAnimatedValue())));
+                        ColorStateList.valueOf((int) a.getAnimatedValue()));
+        });
         liveBtnAnim.start();
     }
 
@@ -478,8 +494,10 @@ import java.util.List;
                 liveBtnAnim.cancel();
                 liveBtnAnim = null;
             }
+            if (btnEngineAnalyze == null) return; // 按钮尚未初始化（如 onCreate 早期）
             btnEngineAnalyze.setBackgroundTintList(null);
-            btnEngineAnalyze.setText(R.string.menu_engine_live_on);
+            // 后台进程已停止：恢复为普通静态文案，不再显示"分析中"
+            btnEngineAnalyze.setText(R.string.menu_engine_live_off);
         });
     }
 
@@ -499,6 +517,7 @@ import java.util.List;
 
         engineBusy = true;
         startLiveAnim();
+        final int myToken = ++analysisToken; // 本次分析令牌，用于棋盘变化时丢弃旧结果
 
         new Thread(() -> {
             List<AnalysisMark> marks = null;
@@ -525,7 +544,7 @@ import java.util.List;
                 int maxVisits = STRENGTH_VISITS[strengthIdx];
                 int topN = katagoPrefs.getInt(PREF_TOP_N, 5);
                 double komi = Double.parseDouble(katagoPrefs.getString(PREF_KOMI, "7.5"));
-                int threads = katagoPrefs.getInt(PREF_THREADS, 2);
+                int threads = katagoPrefs.getInt(PREF_THREADS, 4);
 
                 AnalysisResult result = katagoEngine.analyze(boardState, boardSize, maxVisits, who, komi, threads);
 
@@ -539,15 +558,17 @@ import java.util.List;
             } catch (Exception e) {
                 Log_e("KataGo分析异常", e);
             } finally {
-                // 拿到新结果后再替换标记，避免分析期间棋盘空白（实时、无闪烁）
-                final List<AnalysisMark> finalMarks = marks;
-                runOnUiThread(() -> {
-                    if (finalMarks != null) boardView.setAnalysisMarks(finalMarks);
-                    else boardView.clearAnalysisMarks();
-                });
                 engineBusy = false;
-                // 单次分析结束（不再自动补齐，避免落子自动分析），恢复按钮
-                if (liveAnalysis) stopLiveAnim();
+                // 后台进程结束，无条件停止动画（不显示"分析中"）
+                stopLiveAnim();
+                // 若期间棋盘已变化（令牌不一致），丢弃旧局面的结果，保持提示消失
+                final List<AnalysisMark> finalMarks = marks;
+                if (myToken == analysisToken) {
+                    runOnUiThread(() -> {
+                        if (finalMarks != null) boardView.setAnalysisMarks(finalMarks);
+                        else boardView.clearAnalysisMarks();
+                    });
+                }
             }
         }).start();
     }
