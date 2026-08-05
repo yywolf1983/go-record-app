@@ -423,9 +423,10 @@ public class BoardView extends View {
                             if (num != null) {
                                 Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
                                 textPaint.setColor(Color.WHITE);
-                                textPaint.setTextSize(radius * 0.85f);
+                                textPaint.setTextSize(radius * 1.0f);
+                                textPaint.setTypeface(Typeface.DEFAULT_BOLD);
                                 textPaint.setTextAlign(Paint.Align.CENTER);
-                                canvas.drawText(String.valueOf(num), px, py + radius * 0.25f, textPaint);
+                                canvas.drawText(String.valueOf(num), px, py + radius * 0.32f, textPaint);
                             }
                         }
                     } else if (stone == GoBoard.WHITE) {
@@ -449,9 +450,10 @@ public class BoardView extends View {
                             if (num != null) {
                                 Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
                                 textPaint.setColor(Color.BLACK);
-                                textPaint.setTextSize(radius * 0.85f);
+                                textPaint.setTextSize(radius * 1.0f);
+                                textPaint.setTypeface(Typeface.DEFAULT_BOLD);
                                 textPaint.setTextAlign(Paint.Align.CENTER);
-                                canvas.drawText(String.valueOf(num), px, py + radius * 0.25f, textPaint);
+                                canvas.drawText(String.valueOf(num), px, py + radius * 0.32f, textPaint);
                             }
                         }
                     }
@@ -602,13 +604,13 @@ public class BoardView extends View {
         Paint bestTextPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         bestTextPaint.setColor(Color.WHITE);
         bestTextPaint.setTextAlign(Paint.Align.CENTER);
-        bestTextPaint.setTextSize(cellSize * 0.62f);
+        bestTextPaint.setTextSize(cellSize * 0.52f);
         bestTextPaint.setTypeface(Typeface.DEFAULT_BOLD);
 
         Paint bestStrokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         bestStrokePaint.setColor(BEST_RING);
         bestStrokePaint.setTextAlign(Paint.Align.CENTER);
-        bestStrokePaint.setTextSize(cellSize * 0.62f);
+        bestStrokePaint.setTextSize(cellSize * 0.52f);
         bestStrokePaint.setTypeface(Typeface.DEFAULT_BOLD);
         bestStrokePaint.setStyle(Paint.Style.STROKE);
         bestStrokePaint.setStrokeWidth(4);
@@ -627,13 +629,13 @@ public class BoardView extends View {
 
         Paint ordTextPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         ordTextPaint.setTextAlign(Paint.Align.CENTER);
-        ordTextPaint.setTextSize(cellSize * 0.50f);
+        ordTextPaint.setTextSize(cellSize * 0.52f);
         ordTextPaint.setTypeface(Typeface.DEFAULT_BOLD);
 
         Paint ordStrokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         ordStrokePaint.setColor(Color.WHITE);
         ordStrokePaint.setTextAlign(Paint.Align.CENTER);
-        ordStrokePaint.setTextSize(cellSize * 0.50f);
+        ordStrokePaint.setTextSize(cellSize * 0.52f);
         ordStrokePaint.setTypeface(Typeface.DEFAULT_BOLD);
         ordStrokePaint.setStyle(Paint.Style.STROKE);
         ordStrokePaint.setStrokeWidth(4.5f);
