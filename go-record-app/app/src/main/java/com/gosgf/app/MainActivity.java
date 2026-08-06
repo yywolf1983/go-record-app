@@ -46,6 +46,7 @@ import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
     public class MainActivity extends AppCompatActivity {
     private GoBoard board;
@@ -84,6 +85,10 @@ import java.util.List;
     private KataGoEngine katagoEngine;
     private boolean enginePrepared = false;
     private Thread analysisThread = null; // 当前分析后台线程，用于生命周期安全回收
+
+    // 最近一次引擎分析结果（以引擎计算、相对“当前行棋方”为准）
+    private double lastWinrate = -1;   // <0 表示尚无结果
+    private double lastScoreLead = 0;  // 当前行棋方领先子数（负=落后）
 
     // Sabaki 风格：实时分析开关（开启后在棋盘上持续显示最优几手）
     private boolean liveAnalysis = false;
@@ -387,6 +392,15 @@ import java.util.List;
         analysisToken++;
         liveAnalysis = false;
         stopLiveAnim();
+        // 棋局已变化，旧分析结果失效，清除步数行末的胜率/优子
+        lastWinrate = -1;
+        lastScoreLead = 0;
+        // 同步刷新步数行，去掉已失效的胜率/优子后缀（避免递归调用 updateCommentDisplay）
+        if (moveCountText != null) {
+            int cur = board.getCurrentMoveIndex();
+            String pl = board.getCurrentPlayer() == GoBoard.BLACK ? "黑方" : "白方";
+            moveCountText.setText("步数: " + cur + " " + pl);
+        }
         if (btnEngineAnalyze != null) btnEngineAnalyze.setText(R.string.menu_engine_live_off);
         boardView.clearAnalysisMarks();
         boardView.refresh();
@@ -582,6 +596,10 @@ import java.util.List;
 
                 AnalysisResult result = katagoEngine.analyze(boardState, boardSize, maxVisits, who, komi, threads);
 
+                // 保存引擎计算结果（以引擎为准，相对当前行棋方），用于步数行末显示
+                lastWinrate = result.rootWinrate;
+                lastScoreLead = result.rootScoreLead;
+
                 // 只取最优 N 手，像 Sabaki 一样只在棋盘上给出最优的几个步子
                 marks = new ArrayList<>();
                 int top = Math.min(topN, result.moves.size());
@@ -602,6 +620,10 @@ import java.util.List;
                     runOnUiThread(() -> {
                         if (finalMarks != null) boardView.setAnalysisMarks(finalMarks);
                         else boardView.clearAnalysisMarks();
+                        // 刷新步数行末的胜率/优子（以引擎结果为准）
+                        int cur = board.getCurrentMoveIndex();
+                        String pl = board.getCurrentPlayer() == GoBoard.BLACK ? "黑方" : "白方";
+                        moveCountText.setText("步数: " + cur + " " + pl + buildAnalysisSuffix());
                     });
                 }
                 // 若 Activity 正在销毁，等分析线程结束后关闭 native 引擎，
@@ -659,6 +681,17 @@ import java.util.List;
         clearSavedGameState();
     }
 
+    /** 以引擎计算结果为准，拼接“胜率/优子”后缀到步数行末（相对当前行棋方） */
+    private String buildAnalysisSuffix() {
+        if (lastWinrate < 0) return "";
+        double winPct = lastWinrate * 100.0;
+        if (lastScoreLead >= 0) {
+            return String.format(Locale.US, " | 胜率%.1f%% 优%.2f子", winPct, lastScoreLead);
+        } else {
+            return String.format(Locale.US, " | 胜率%.1f%% 差%.2f子", winPct, -lastScoreLead);
+        }
+    }
+
     /**
      * 更新注释和步数显示
      */
@@ -667,7 +700,7 @@ import java.util.List;
         int currentIndex = board.getCurrentMoveIndex();
         int totalMoves = board.getMoveHistory().size();
         String player = board.getCurrentPlayer() == GoBoard.BLACK ? "黑方" : "白方";
-        moveCountText.setText("步数: " + currentIndex + " " + player);
+        moveCountText.setText("步数: " + currentIndex + " " + player + buildAnalysisSuffix());
 
         // 更新注释显示
         String comment = board.getCurrentComment();
