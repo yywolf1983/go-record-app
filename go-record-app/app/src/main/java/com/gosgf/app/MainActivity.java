@@ -364,21 +364,21 @@ import java.util.List;
         // KataGo 引擎按钮（实时分析开关，开启后首次自动在后台初始化引擎）
         btnEngineAnalyze = findViewById(R.id.btn_engine_analyze);
         // 点击：Sabaki 风格的实时分析开关；长按：弹出 KataGo 设置页
-        btnEngineAnalyze.setOnClickListener(v -> toggleLiveAnalysis());
+        btnEngineAnalyze.setOnClickListener(v -> onAnalyzeButtonClick());
         btnEngineAnalyze.setOnLongClickListener(v -> { showKataGoSettings(); return true; });
 
         katagoPrefs = getSharedPreferences("katago_settings", MODE_PRIVATE);
     }
 
-    private void toggleLiveAnalysis() {
-        liveAnalysis = !liveAnalysis;
-        if (liveAnalysis) {
-            // "分析中"动画由 runAnalysis 在 engineBusy 期间驱动，这里不预设文案
-            Toast.makeText(this, R.string.engine_analyzing, Toast.LENGTH_SHORT).show();
-            runAnalysis();
-        } else {
-            cancelLiveAnalysis();
-        }
+    /**
+     * 分析按钮单击：开启实时分析（若未开启）或直接重新分析当前局面（若已开启）。
+     * 注意：点击按钮不会关闭分析——关闭只发生在落子/棋局变化时（见 cancelLiveAnalysis）。
+     * 这样分析结束后用户未落子时，点一次即可重新分析，无需两次点击。
+     */
+    private void onAnalyzeButtonClick() {
+        liveAnalysis = true;
+        Toast.makeText(this, R.string.engine_analyzing, Toast.LENGTH_SHORT).show();
+        runAnalysis();
     }
 
     /** 取消分析：清除棋盘标记并复位按钮（棋盘变化后调用，确保提示消失） */
