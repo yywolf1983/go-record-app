@@ -1,7 +1,10 @@
 package com.gosgf.app.model;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.Stack;
 
 /**
@@ -138,6 +141,8 @@ public class GoBoard {
     private Move lastMove;
     private Move koMove;
     private int currentMoveIndex;
+    // Superko（全局同形禁着）：当前路径上所有已出现过的局面 hash（棋盘状态 + 轮到谁走）
+    private Set<Integer> positionHashes = new HashSet<>();
     private String blackPlayer;
     private String whitePlayer;
     private String result;
@@ -176,6 +181,7 @@ public class GoBoard {
         handicapMgr.clearHandicapStones();
         handicapMgr.setHandicap(0);
         scoreEstimator = new ScoreEstimator(board);
+        positionHashes = new HashSet<>();
     }
 
     // ==================== 初始化 / 新局 ====================
@@ -186,6 +192,8 @@ public class GoBoard {
         handicapMgr.applyHandicapStones();
         firstPlayer = (handicapMgr.getHandicap() > 0) ? WHITE : BLACK;
         currentPlayer = firstPlayer;
+        // Superko：初始（座子后）局面作为已出现局面
+        positionHashes.add(boardHash(board, currentPlayer));
     }
 
     // ==================== 核心落子逻辑 ====================
@@ -215,6 +223,11 @@ public class GoBoard {
         List<Position> capturedStones = BoardLogic.captureStones(tempBoard, x, y, currentPlayer);
 
         if (BoardLogic.hasLiberty(tempBoard, x, y, currentPlayer)) {
+            // Superko：记录落子前的局面（已出现，合法）
+            positionHashes.add(boardHash(board, currentPlayer));
+            // 保存落子前的棋盘引用，superko 回滚时恢复用
+            int[][] boardBefore = board;
+
             board = tempBoard;
             handicapMgr.setBoard(board);
             Move move = new Move(x, y, currentPlayer, capturedStones);
@@ -224,11 +237,28 @@ public class GoBoard {
 
             koMove = (capturedStones.size() == 1) ? new Move(x, y, currentPlayer) : null;
 
+            // Superko（全局同形禁着）：落子后局面（棋盘 + 轮到对手）若与历史任意局面相同则禁止
+            int opponent = (currentPlayer == BLACK) ? WHITE : BLACK;
+            int newPos = boardHash(board, opponent);
+            if (positionHashes.contains(newPos)) {
+                // 回滚本次落子（尚未写入 gameTree、尚未切换玩家）
+                board = boardBefore;
+                handicapMgr.setBoard(board);
+                moveHistory.remove(moveHistory.size() - 1);
+                currentMoveIndex = moveHistory.size() - 1;
+                lastMove = currentMoveIndex >= 0 ? moveHistory.get(currentMoveIndex) : null;
+                koMove = null;
+                lastErrorMessage = "循环劫（全局同形）禁着，不能立即提回";
+                return false;
+            }
+            positionHashes.add(newPos);
+
+            // 检测通过后才切换玩家并写入游戏树
+            switchPlayer();
             if (gameTree.getCurrentNode() != null) {
                 gameTree.addMove(move);
             }
 
-            switchPlayer();
             lastErrorMessage = "";
             return true;
         }
@@ -237,8 +267,29 @@ public class GoBoard {
         return false;
     }
 
+    /**
+     * 计算局面的哈希值（棋盘状态 + 轮到谁走），用于 Superko 全局同形禁着判断。
+     * 编码：每个交叉点 2 bit（EMPTY=0,BLACK=1,WHITE=2），拼接 currentPlayer。
+     * 棋盘状态编码进 long 数组（避免单 long 溢出导致碰撞），再用 Arrays.hashCode 得整型哈希。
+     */
+    private int boardHash(int[][] b, int player) {
+        long[] arr = new long[(BOARD_SIZE * BOARD_SIZE) / 32 + 1];
+        int i = 0;
+        for (int y = 0; y < BOARD_SIZE; y++) {
+            for (int x = 0; x < BOARD_SIZE; x++) {
+                int cell = b[y][x] & 3;
+                arr[i / 32] |= ((long) cell) << ((i % 32) * 2);
+                i++;
+            }
+        }
+        arr[arr.length - 1] |= ((long) (player & 3)) << 60;
+        return Arrays.hashCode(arr);
+    }
+
     /** 虚手处理 */
     private boolean placePassStone() {
+        // Superko：记录虚手前的局面
+        positionHashes.add(boardHash(board, currentPlayer));
         Move passMove = new Move(-1, -1, currentPlayer);
         moveHistory.add(passMove);
         lastMove = passMove;
@@ -249,6 +300,7 @@ public class GoBoard {
             gameTree.addMove(passMove);
         }
         switchPlayer();
+        positionHashes.add(boardHash(board, currentPlayer));
         return true;
     }
 
@@ -322,6 +374,8 @@ public class GoBoard {
             currentPlayer = prev.player;
             lastMove = (currentMoveIndex >= 0) ? moveHistory.get(currentMoveIndex) : null;
             koMove = null;
+            positionHashes.clear();
+            positionHashes.add(boardHash(board, currentPlayer));
         }
     }
 
@@ -384,6 +438,8 @@ public class GoBoard {
             koMove = null;
             lastMove = null;
             currentMoveIndex = -1;
+            positionHashes.clear();
+            positionHashes.add(boardHash(board, currentPlayer));
             return;
         }
 
@@ -412,6 +468,10 @@ public class GoBoard {
         applyHandicapStones();
         currentPlayer = firstPlayer;
 
+        // Superko：根局面（座子完成后、未落子）作为初始已出现局面
+        positionHashes.clear();
+        positionHashes.add(boardHash(board, currentPlayer));
+
         String savedErrorMessage = lastErrorMessage;
         lastErrorMessage = "";
 
@@ -421,9 +481,12 @@ public class GoBoard {
                 board[pathNode.move.y][pathNode.move.x] = currentPlayer;
                 BoardLogic.captureStones(board, pathNode.move.x, pathNode.move.y, currentPlayer);
                 switchPlayer();
+                // 每步重放后，将新局面加入 superko 历史集合
+                positionHashes.add(boardHash(board, currentPlayer));
             } else if (pathNode.move != null && pathNode.move.x == -1 && pathNode.move.y == -1) {
                 currentPlayer = pathNode.move.player;
                 switchPlayer();
+                positionHashes.add(boardHash(board, currentPlayer));
             }
         }
 
@@ -623,6 +686,8 @@ public class GoBoard {
             lastMove = null;
             currentPlayer = firstPlayer;
             koMove = null;
+            positionHashes.clear();
+            positionHashes.add(boardHash(board, currentPlayer));
         }
     }
 

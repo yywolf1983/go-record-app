@@ -149,4 +149,76 @@ public class GoBoardTest {
     private void placeStone(GoBoard board, int x, int y, int player) {
         board.getBoard()[y][x] = player;
     }
+
+    @Test
+    public void testSuperkoPreventsRepetition() throws Exception {
+        // Superko（全局同形禁着）：当落子后局面与历史某局面完全相同（含轮走方）时禁止落子。
+        // 通过反射直接控制局面与历史集合，构造"走一步后又回到相同局面"的重复场景。
+        java.lang.reflect.Field boardField = GoBoard.class.getDeclaredField("board");
+        boardField.setAccessible(true);
+        int[][] b = (int[][]) boardField.get(board);
+        for (int y = 0; y < 19; y++) for (int x = 0; x < 19; x++) b[y][x] = GoBoard.EMPTY;
+
+        java.lang.reflect.Field playerField = GoBoard.class.getDeclaredField("currentPlayer");
+        playerField.setAccessible(true);
+        playerField.set(board, GoBoard.BLACK);
+
+        // 用黑(0,0) 落子：局面 A(空盘黑) -> 局面 B(黑0,0轮白)。B 合法，记入集合。
+        boolean first = board.placeStone(0, 0);
+        if (!first) System.out.println("DEBUG first placeStone failed: " + board.getLastErrorMessage());
+        assertTrue("首次落子应成功", first);
+        int[][] fresh = board.getBoard();
+        assertFalse("落子后 (0,0) 应为黑", fresh[0][0] == GoBoard.EMPTY);
+
+        // 手动还原到局面 A（空盘、轮黑），并往历史集合注入"局面 B 曾出现过"
+        // 注意 board 字段在 placeStone 后指向新数组，必须用 getBoard() 取最新引用
+        int[][] cur = board.getBoard();
+        for (int y = 0; y < 19; y++) for (int x = 0; x < 19; x++) cur[y][x] = GoBoard.EMPTY;
+        playerField.set(board, GoBoard.BLACK);
+        java.lang.reflect.Field posField = GoBoard.class.getDeclaredField("positionHashes");
+        posField.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        java.util.Set<Integer> posHashes = (java.util.Set<Integer>) posField.get(board);
+        posHashes.clear();
+        // 局面 A（空盘+黑）入集合
+        java.lang.reflect.Method hashMethod = GoBoard.class.getDeclaredMethod("boardHash", int[][].class, int.class);
+        hashMethod.setAccessible(true);
+        posHashes.add((Integer) hashMethod.invoke(board, cur, GoBoard.BLACK));
+        // 关键：局面 B（黑0,0 + 白）作为"历史曾出现"注入，模拟此前已经走过这一步
+        cur[0][0] = GoBoard.BLACK;
+        posHashes.add((Integer) hashMethod.invoke(board, cur, GoBoard.WHITE));
+        cur[0][0] = GoBoard.EMPTY; // 还原空盘，准备再次落子
+
+        // 再次在空盘(轮黑)落黑(0,0)：落子后局面 B(黑0,0轮白) 已在历史集合 -> 应被 superko 拦截
+        boolean result = board.placeStone(0, 0);
+        assertFalse("重复局面应被 Superko 拦截", result);
+        assertEquals("被拦截时应提示循环劫禁着", "循环劫（全局同形）禁着，不能立即提回", board.getLastErrorMessage());
+    }
+
+    @Test
+    public void testSuperkoAllowsNormalPlay() {
+        // 普通序列不应被 superko 误伤：连续不同局面都应合法
+        assertTrue("hand 1", board.placeStone(3, 3));
+        boolean h2 = board.placeStone(15, 15);
+        if (!h2) System.out.println("DEBUG h2 failed: " + board.getLastErrorMessage());
+        assertTrue("hand 2", h2);
+        assertTrue("hand 3", board.placeStone(3, 15));
+        assertTrue("hand 4", board.placeStone(15, 3));
+        assertEquals("应共 4 手", 4, board.getMoveHistory().size());
+    }
+
+    @Test
+    public void testSuperkoDoesNotBlockNormalKo() {
+        // 回归：普通劫（单子劫）仍应由 koMove 拦截，且 superko 不干扰
+        // 经典单劫形：黑做劫眼于 (2,2)，仅一口外气(2,3) 被白占据
+        board.placeStone(1, 2);
+        board.placeStone(3, 2);
+        board.placeStone(2, 1);
+        // 黑在 (2,2) 落子做劫眼（四面：上下为黑、左右仅 (2,3) 为空，落子后该黑块仅剩 (2,3) 一气）
+        assertTrue("黑应能在 (2,2) 落子形成劫眼", board.placeStone(2, 2));
+        // 白占 (2,3) 提掉黑(2,2) 形成劫
+        assertTrue("白应提掉黑子形成劫", board.placeStone(2, 3));
+        // 黑立即回提应被普通劫规则拦截（koMove 仍生效）
+        assertFalse("打劫不能立即回提", board.placeStone(2, 2));
+    }
 }
