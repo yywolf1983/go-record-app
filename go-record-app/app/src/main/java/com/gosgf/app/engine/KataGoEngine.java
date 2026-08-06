@@ -118,9 +118,18 @@ public class KataGoEngine {
         if (cfgFile == null) return "配置文件缺失，请确认已放入 assets/" + CFG_ASSET;
         rewriteConfigModel(cfgFile, modelFile.getAbsolutePath());
 
+        // 打印正在加载的模型（文件名 + 绝对路径），便于核对从配置加载的文件是否正确
+        Log.i(TAG, "准备从配置加载模型: fileName=" + modelFile.getName()
+                + " absPath=" + modelFile.getAbsolutePath()
+                + " cfg=" + cfgFile.getAbsolutePath());
+
         int ret = initialize(modelFile.getAbsolutePath(), cfgFile.getAbsolutePath());
         if (ret != 0) {
-            return "引擎初始化失败：" + getLastError();
+            String err = getLastError();
+            // 完整打印 native 错误原文到 logcat，便于用 adb logcat 查看根因
+            // （如 "newer model version than this katago supports" 等版本不匹配提示）
+            Log.e(TAG, "initialize 失败 (ret=" + ret + ") getLastError=" + err);
+            return "引擎初始化失败：\n" + (err != null ? err : "(无错误详情，ret=" + ret + ")");
         }
         initialized = true;
         return null;
@@ -265,6 +274,7 @@ public class KataGoEngine {
 
     /** 把配置文件中的 model= 行重写为指定绝对路径 */
     private void rewriteConfigModel(File cfgFile, String modelAbsPath) {
+        Log.i(TAG, "重写配置 model= 为: " + modelAbsPath + " (cfg=" + cfgFile.getAbsolutePath() + ")");
         File tmp = new File(cfgFile.getAbsolutePath() + ".tmp");
         try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.FileReader(cfgFile));
              FileOutputStream fos = new FileOutputStream(tmp)) {

@@ -83,6 +83,7 @@ import java.util.List;
     // KataGo 引擎（随包内置）
     private KataGoEngine katagoEngine;
     private boolean enginePrepared = false;
+    private Thread analysisThread = null; // 当前分析后台线程，用于生命周期安全回收
 
     // Sabaki 风格：实时分析开关（开启后在棋盘上持续显示最优几手）
     private boolean liveAnalysis = false;
@@ -246,18 +247,27 @@ import java.util.List;
                 getContentResolver().takePersistableUriPermission(uri, takeFlags);
             } catch (SecurityException ignored) {}
 
-            // 目标文件名按源扩展名自适应：.txt.gz / .bin.gz 等，保证 KataGo 按内容正确识别
-            String srcName = (uri != null && uri.getLastPathSegment() != null)
-                    ? uri.getLastPathSegment() : "";
-            String destName;
-            if (srcName.toLowerCase().endsWith(".txt.gz")) {
-                destName = "katago_model.txt.gz";
-            } else if (srcName.toLowerCase().endsWith(".bin.gz")) {
-                destName = "katago_model.bin.gz";
-            } else {
-                destName = "katago_model.bin.gz";
+            // 目标文件名保留源文件原名（不再统一重命名为 katago_model.*），
+            // 但必须保证以 .gz 结尾，否则 KataGo 不会按 gzip 解压而加载失败。
+            // 优先 DISPLAY_NAME → 其次 getLastPathSegment（可能是文档 ID 如 msf:xxx）
+            String srcName = queryUriDisplayName(uri);
+            if (srcName.isEmpty() && uri != null && uri.getLastPathSegment() != null) {
+                srcName = uri.getLastPathSegment();
+                int slash = Math.max(srcName.lastIndexOf('/'), srcName.lastIndexOf('\\'));
+                if (slash >= 0) srcName = srcName.substring(slash + 1);
             }
-            File dest = new File(getFilesDir(), destName);
+            if (srcName.isEmpty()) {
+                srcName = "katago_model_" + System.currentTimeMillis();
+            }
+            // 去掉可能混入的路径分隔符
+            int slash = Math.max(srcName.lastIndexOf('/'), srcName.lastIndexOf('\\'));
+            if (slash >= 0) srcName = srcName.substring(slash + 1);
+            // 强制保证 .gz 后缀（KataGo 按扩展名判断是否 gzip；msf:xxx 这类无后缀名必须补）
+            if (!srcName.toLowerCase().endsWith(".gz")) {
+                // 若原名已带 .txt/.bin 等子类型，升级成 .txt.gz/.bin.gz；否则补 .bin.gz
+                srcName = srcName + ".gz";
+            }
+            File dest = new File(getFilesDir(), srcName);
             try (java.io.InputStream in = getContentResolver().openInputStream(uri);
                  java.io.FileOutputStream fos = new java.io.FileOutputStream(dest)) {
                 if (in == null) throw new java.io.IOException("无法打开模型文件");
@@ -266,9 +276,14 @@ import java.util.List;
                 while ((n = in.read(buf)) > 0) fos.write(buf, 0, n);
             }
             katagoPrefs.edit().putString(PREF_MODEL_PATH, dest.getAbsolutePath()).apply();
-            Toast.makeText(this, R.string.katago_model_copied, Toast.LENGTH_SHORT).show();
-            // 模型变更：重新准备引擎（下次分析使用新模型）
+            Log_e("已复制模型到内部: " + dest.getAbsolutePath(), null);
+            // 直接在原 Toast 上显示真实文件名，确保用户立刻看到原名
+            Toast.makeText(this, "已导入模型：" + dest.getName(), Toast.LENGTH_SHORT).show();
+            // 模型变更：先停止可能正在进行的分析并等待线程结束，避免 close 与
+            // analyze 并发访问同一 native 对象导致进程崩溃（native 崩溃 Java 层无法捕获）
+            stopAnalysisAndWait();
             if (katagoEngine != null) katagoEngine.closeEngine();
+            katagoEngine = null;
             enginePrepared = false;
             // 若分析已开启，立即用新模型重分析
             if (liveAnalysis) runAnalysis();
@@ -283,6 +298,21 @@ import java.util.List;
     }
 
     private TextView modelPathText; // 设置页中显示当前模型路径的 TextView
+
+    /** 从 DocumentProvider URI 查询文件显示名（部分文件管理器 getLastPathSegment 取不到时用） */
+    private String queryUriDisplayName(android.net.Uri uri) {
+        if (uri == null) return "";
+        String name = "";
+        try (android.database.Cursor c = getContentResolver()
+                .query(uri, new String[]{android.provider.OpenableColumns.DISPLAY_NAME},
+                        null, null, null)) {
+            if (c != null && c.moveToFirst()) {
+                int idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME);
+                if (idx >= 0) name = c.getString(idx);
+            }
+        } catch (Exception ignored) {}
+        return name != null ? name : "";
+    }
     
     private void initButtons() {
         // 工具栏按钮
@@ -519,15 +549,19 @@ import java.util.List;
         startLiveAnim();
         final int myToken = ++analysisToken; // 本次分析令牌，用于棋盘变化时丢弃旧结果
 
-        new Thread(() -> {
+        analysisThread = new Thread(() -> {
             List<AnalysisMark> marks = null;
+            boolean activityFinishing = isFinishing();
             try {
                 if (katagoEngine == null) katagoEngine = new KataGoEngine();
                 if (!enginePrepared) {
                     String modelPath = katagoPrefs.getString(PREF_MODEL_PATH, "");
                     String err = katagoEngine.prepare(this, modelPath);
                     if (err != null) {
-                        runOnUiThread(() -> Toast.makeText(this, "引擎准备失败：" + err,
+                        Log_e("prepare 失败: " + err, null);
+                        final String finalErr = err;
+                        runOnUiThread(() -> Toast.makeText(this,
+                                "引擎准备失败（完整错误见 logcat）：\n" + finalErr,
                                 Toast.LENGTH_LONG).show());
                         return;
                     }
@@ -559,6 +593,7 @@ import java.util.List;
                 Log_e("KataGo分析异常", e);
             } finally {
                 engineBusy = false;
+                activityFinishing = isFinishing();
                 // 后台进程结束，无条件停止动画（不显示"分析中"）
                 stopLiveAnim();
                 // 若期间棋盘已变化（令牌不一致），丢弃旧局面的结果，保持提示消失
@@ -569,8 +604,31 @@ import java.util.List;
                         else boardView.clearAnalysisMarks();
                     });
                 }
+                // 若 Activity 正在销毁，等分析线程结束后关闭 native 引擎，
+                // 避免 Activity 已销毁但 native 仍在跑 / close 与 analyze 并发导致进程崩溃
+                if (activityFinishing && katagoEngine != null) {
+                    katagoEngine.closeEngine();
+                    katagoEngine = null;
+                    enginePrepared = false;
+                }
+                if (Thread.currentThread() == analysisThread) analysisThread = null;
             }
-        }).start();
+        });
+        analysisThread.start();
+    }
+
+    /** 等待后台分析线程自然结束（最多 3s），避免与 closeEngine 并发。不改 liveAnalysis 开关本身。 */
+    private void stopAnalysisAndWait() {
+        Thread t = analysisThread;
+        if (t != null && t.isAlive()) {
+            try {
+                t.join(3000);
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        analysisThread = null;
+        engineBusy = false;
     }
 
     private void Log_e(String msg, Exception e) {
@@ -1238,6 +1296,14 @@ import java.util.List;
         super.onDestroy();
         // 保存棋局状态
         saveGameStateToPreferences();
+        // 停止分析线程并在退出前关闭 native 引擎，避免 Activity 销毁后 native 仍在跑
+        // 或 close 与分析并发导致进程崩溃
+        stopAnalysisAndWait();
+        if (katagoEngine != null) {
+            katagoEngine.closeEngine();
+            katagoEngine = null;
+        }
+        enginePrepared = false;
     }
     
     /**
