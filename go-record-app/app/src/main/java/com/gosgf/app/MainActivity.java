@@ -671,7 +671,10 @@ import java.util.List;
                 int blackCount = board.getBlackHandicapStones().size();
                 int whiteCount = board.getWhiteHandicapStones().size();
                 int total = blackCount + whiteCount;
-                board.setHandicap(blackCount);
+                // 注意：摆子不应等同于“让子数(handiap)”。handicap 表示标准让子布局，
+                // 若按黑子数量设置，保存的 SGF 会带上错误的 HA，重新加载时 setupHandicap
+                // 会按标准星位再放一批黑子（四角），导致多出棋子。摆子仅依赖座子列表(AB/AW)还原。
+                board.setHandicap(0);
 
                 String deadInfo = deadCount > 0 ? "，已自动提" + deadCount + "死子" : "";
 

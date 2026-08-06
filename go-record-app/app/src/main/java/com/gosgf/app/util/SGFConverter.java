@@ -373,11 +373,15 @@ public class SGFConverter {
         }
 
         // 加载让子信息
+        // 注意：若 SGF 同时给出了 AB/AW（摆子/自定义座子），则优先使用 AB/AW，
+        // 不要再按标准星位布局 setupHandicap，否则会在四角等位置多出额外黑子。
+        boolean hasExplicitStones = node.properties.containsKey(PROP_BLACK_STONES)
+                || node.properties.containsKey(PROP_WHITE_STONES);
         if (node.properties.containsKey(PROP_HANDICAP)) {
             try {
                 int handicap = Integer.parseInt(node.properties.get(PROP_HANDICAP).get(0));
                 board.setHandicap(handicap);
-                if (handicap > 0) {
+                if (handicap > 0 && !hasExplicitStones) {
                     board.setupHandicap(handicap);
                     // 有让子时，默认白方先手
                     board.setFirstPlayer(GoBoard.WHITE);
