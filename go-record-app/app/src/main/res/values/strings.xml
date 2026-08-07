@@ -49,6 +49,8 @@
     <string name="katago_komi">贴目</string>
     <string name="katago_threads">分析线程数</string>
     <string name="katago_settings_hint">修改后下一次分析自动生效。</string>
+    <string name="katago_auto_analyze">自动分析（每步落子后立即分析）</string>
+    <string name="katago_auto_analyze_on">已开启自动分析</string>
     <string name="katago_model">模型文件</string>
     <string name="katago_model_select">选择模型…</string>
     <string name="katago_model_not_set">未选择（请在任意目录选择 .bin.gz 模型）</string>

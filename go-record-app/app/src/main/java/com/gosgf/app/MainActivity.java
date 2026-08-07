@@ -18,6 +18,7 @@ import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
+import android.widget.Switch;
 import android.content.SharedPreferences;
 import android.widget.Spinner;
 import android.widget.TextView;
@@ -92,6 +93,8 @@ import java.util.Locale;
 
     // Sabaki 风格：实时分析开关（开启后在棋盘上持续显示最优几手）
     private boolean liveAnalysis = false;
+    // 全自动分析：每步落子/导航后立即自动分析（无需点击分析按钮）
+    private boolean autoAnalyze = false;
     private boolean engineBusy = false;
     private int analysisToken = 0; // 每次分析+1，棋盘变化时取消旧分析使其结果作废
     private ValueAnimator liveBtnAnim;
@@ -106,6 +109,7 @@ import java.util.Locale;
     private static final String PREF_KOMI = "katago_komi";
     private static final String PREF_THREADS = "katago_threads";
     private static final String PREF_MODEL_PATH = "katago_model_path"; // 用户选定的模型绝对路径
+    private static final String PREF_AUTO_ANALYZE = "katago_auto_analyze"; // 全自动分析开关
     // 分析强度档位 → 实际 maxVisits（EIGEN 纯 CPU 下档位越低越快；AGM H6 等低端机用低档）
     private static final int[] STRENGTH_VISITS = {50, 100, 200, 400, 800};
     private static final String[] KOMI_VALUES = {"7.5", "6.5", "0.5", "5.5", "0.0"};
@@ -373,6 +377,7 @@ import java.util.Locale;
         btnEngineAnalyze.setOnLongClickListener(v -> { showKataGoSettings(); return true; });
 
         katagoPrefs = getSharedPreferences("katago_settings", MODE_PRIVATE);
+        autoAnalyze = katagoPrefs.getBoolean(PREF_AUTO_ANALYZE, false);
     }
 
     /**
@@ -479,17 +484,29 @@ import java.util.Locale;
             if (THREAD_VALUES[i] == curThreads) { spinnerThreads.setSelection(i); break; }
         }
 
+        // 全自动分析开关
+        Switch switchAutoAnalyze = view.findViewById(R.id.switch_auto_analyze);
+        switchAutoAnalyze.setChecked(katagoPrefs.getBoolean(PREF_AUTO_ANALYZE, false));
+
         new AlertDialog.Builder(this)
                 .setView(view)
                 .setPositiveButton(android.R.string.ok, (d, w) -> {
+                    boolean auto = switchAutoAnalyze.isChecked();
                     katagoPrefs.edit()
                             .putInt(PREF_MAX_VISITS, seekStrength.getProgress())
                             .putInt(PREF_TOP_N, seekTopN.getProgress())
                             .putString(PREF_KOMI, KOMI_VALUES[spinnerKomi.getSelectedItemPosition()])
                             .putInt(PREF_THREADS, THREAD_VALUES[spinnerThreads.getSelectedItemPosition()])
+                            .putBoolean(PREF_AUTO_ANALYZE, auto)
                             .apply();
-                    // 设置变更后立即重新分析当前局面（若实时分析已开启）
-                    if (liveAnalysis) runAnalysis();
+                    autoAnalyze = auto;
+                    // 开启全自动分析后立即分析当前局面；关闭则按既有逻辑（若手动分析开启则重分析）
+                    if (autoAnalyze) {
+                        liveAnalysis = true;
+                        runAnalysis();
+                    } else if (liveAnalysis) {
+                        runAnalysis();
+                    }
                 })
                 .setNegativeButton(android.R.string.cancel, null)
                 .show();
@@ -710,8 +727,22 @@ import java.util.Locale;
             commentText.setText("");
         }
 
-        // 局面已变化：若正在分析，则清除旧标记并复位（不再自动分析，需用户再次点击）
-        cancelLiveAnalysis();
+        // 局面已变化：若开启全自动分析，则立即对当前局面重新分析；
+        // 否则清除旧标记并复位（需用户再次点击分析按钮）
+        if (autoAnalyze && !isFinishing()) {
+            liveAnalysis = true;
+            // 局面已变，立即清除棋盘上一步的旧标记，避免残留，等新分析回来再绘制
+            boardView.clearAnalysisMarks();
+            // 若上一步分析仍在运行（engineBusy=true），runAnalysis 会直接丢弃本次请求，
+            // 导致旧提示被 stopLiveAnim 清掉后再也不出现。这里先等待旧分析结束
+            // （其 finally 因 token 不匹配不会重绘旧局面），再启动新的分析，提示即可连续显示。
+            if (engineBusy) {
+                stopAnalysisAndWait();
+            }
+            runAnalysis();
+        } else {
+            cancelLiveAnalysis();
+        }
     }
 
     private void onPlace() {
