@@ -1240,7 +1240,7 @@ import java.util.Locale;
         final int[][] snapshot = board.getBoard();
         final int boardSize = snapshot.length;
         final int nextPlayer = blackToMove ? GoBoard.BLACK : GoBoard.WHITE;
-        final int threads = Integer.parseInt(katagoPrefs.getString(PREF_THREADS, "1"));
+        final int threads = katagoPrefs.getInt(PREF_THREADS, 4);
         final int strengthIdx = katagoPrefs.getInt(PREF_MAX_VISITS, 1);
         // visits 比实时分析（≤100）更高，但封顶 200 以确保 2 秒内返回
         final int estVisits = Math.min(STRENGTH_VISITS[strengthIdx] * 3, 200);
