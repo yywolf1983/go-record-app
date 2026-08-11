@@ -7,10 +7,12 @@ import android.content.Intent;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.net.Uri;
+import android.widget.FrameLayout;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.ImageButton;
@@ -86,6 +88,12 @@ import java.util.Locale;
     private KataGoEngine katagoEngine;
     private boolean enginePrepared = false;
     private Thread analysisThread = null; // 当前分析后台线程，用于生命周期安全回收
+
+    // 估算：后台低算力校正用（与实时分析共用引擎，引擎忙则跳过校正）
+    private int estimateToken = 0; // 每次估算+1，取代旧校正结果
+    private AlertDialog lastEstimateDialog = null;
+    private TextView lastEstimateLeadView = null;
+    private final Handler scoreEstimateHandler = new Handler(Looper.getMainLooper());
 
     // 最近一次引擎分析结果（以引擎计算、相对“当前行棋方”为准）
     private double lastWinrate = -1;   // <0 表示尚无结果
@@ -378,6 +386,8 @@ import java.util.Locale;
 
         katagoPrefs = getSharedPreferences("katago_settings", MODE_PRIVATE);
         autoAnalyze = katagoPrefs.getBoolean(PREF_AUTO_ANALYZE, false);
+        // 同步设置中的贴目到棋盘，确保估算口径与 KataGo 引擎一致
+        board.setKomi((float) Double.parseDouble(katagoPrefs.getString(PREF_KOMI, "7.5")));
     }
 
     /**
@@ -500,6 +510,8 @@ import java.util.Locale;
                             .putBoolean(PREF_AUTO_ANALYZE, auto)
                             .apply();
                     autoAnalyze = auto;
+                    // 立即把设置中的贴目同步到棋盘，使估算口径随之更新
+                    board.setKomi((float) Double.parseDouble(katagoPrefs.getString(PREF_KOMI, "7.5")));
                     // 开启全自动分析后立即分析当前局面；关闭则按既有逻辑（若手动分析开启则重分析）
                     if (autoAnalyze) {
                         liveAnalysis = true;
@@ -599,19 +611,25 @@ import java.util.Locale;
                     enginePrepared = true;
                 }
 
-                // 直接取当前真实棋盘状态发给引擎（避免走子历史重建错位）
+                // 取当前真实棋盘状态发给引擎（不挖死子：死活完全由 KataGo 判定，全自动）。
                 int[][] boardState = board.getBoard();
                 int boardSize = boardState.length; // 棋盘边长（通常 19）
                 int who = board.getCurrentPlayer();
 
                 // 读取 KataGo 设置（长按按钮设置，下一次分析自动生效）
                 int strengthIdx = katagoPrefs.getInt(PREF_MAX_VISITS, 1);
+                // 自动/实时分析降档以加快结果返回（最多 100 visits）
+                if (strengthIdx > 1) strengthIdx = 1;
                 int maxVisits = STRENGTH_VISITS[strengthIdx];
-                int topN = katagoPrefs.getInt(PREF_TOP_N, 5);
-                double komi = Double.parseDouble(katagoPrefs.getString(PREF_KOMI, "7.5"));
                 int threads = katagoPrefs.getInt(PREF_THREADS, 4);
+                int topN = katagoPrefs.getInt(PREF_TOP_N, 5);
+                boolean includePolicy = true;
+                double komi = Double.parseDouble(katagoPrefs.getString(PREF_KOMI, "7.5"));
+                // 同步设置中的贴目到棋盘（ScoreEstimator），使落子瞬间的启发式兜底
+                // 与 KataGo 引擎使用同一贴目，避免覆盖时因贴目不一致而跳变。
+                board.setKomi((float) komi);
 
-                AnalysisResult result = katagoEngine.analyze(boardState, boardSize, maxVisits, who, komi, threads);
+                AnalysisResult result = katagoEngine.analyze(boardState, boardSize, maxVisits, who, komi, threads, includePolicy);
 
                 // 保存引擎计算结果（以引擎为准，相对当前行棋方），用于步数行末显示
                 lastWinrate = result.rootWinrate;
@@ -673,7 +691,7 @@ import java.util.Locale;
     private void Log_e(String msg, Exception e) {
         android.util.Log.e("MainActivity", msg, e);
     }
-    
+
     private void onBoardTouch(int x, int y) {
         boardView.setTerritoryMode(false);
         boolean success = board.placeStone(x, y);
@@ -698,15 +716,19 @@ import java.util.Locale;
         clearSavedGameState();
     }
 
-    /** 以引擎计算结果为准，拼接“胜率/优子”后缀到步数行末（相对当前行棋方） */
+    /** 以引擎计算结果为准，拼接“胜率/优子”后缀到步数行末（相对当前行棋方）。
+     *  若引擎结果尚不可用（未分析/分析中），则提示“计算中…”，避免显示一个会被覆盖的粗糙估值误导用户。 */
     private String buildAnalysisSuffix() {
-        if (lastWinrate < 0) return "";
-        double winPct = lastWinrate * 100.0;
-        if (lastScoreLead >= 0) {
-            return String.format(Locale.US, " | 胜率%.1f%% 优%.2f子", winPct, lastScoreLead);
-        } else {
-            return String.format(Locale.US, " | 胜率%.1f%% 差%.2f子", winPct, -lastScoreLead);
+        if (lastWinrate >= 0) {
+            double winPct = lastWinrate * 100.0;
+            if (lastScoreLead >= 0) {
+                return String.format(Locale.US, " | 胜率%.1f%% 优%.2f子", winPct, lastScoreLead);
+            } else {
+                return String.format(Locale.US, " | 胜率%.1f%% 差%.2f子", winPct, -lastScoreLead);
+            }
         }
+        // 兜底：引擎结果未回来前，统一提示“计算中…”，不在界面上呈现未定估值
+        return " | 计算中…";
     }
 
     /**
@@ -1146,53 +1168,128 @@ import java.util.Locale;
     }
 
     /**
-     * 估算当前局面胜负
+     * 估算当前局面胜负 —— 参照 Sabaki 的快速估算：纯启发式（影响图 + 死活判定），
+     * 毫秒级出结果，不依赖 KataGo 引擎，因此总能「秒出」。
+     * 结果以相对当前行棋方的目差展示（与自动分析的口径一致）。
+     */
+    /**
+     * 估算：毫秒级纯启发式秒出弹窗，同时后台用极低 visits 的 KataGo scoring 校正
+     * 「领先目数」并自动刷新弹窗。整体仍属「估算」（非精算），校正限时 1.5s。
      */
     private void onScore() {
         boardView.setTerritoryMode(true);
-        
-        String scoreResult = board.getScoreResult();
-        
-        new AlertDialog.Builder(this)
+
+        // 同步设置中的贴目到棋盘（启发式估算使用同一贴目，避免口径不一致）
+        double komi = Double.parseDouble(katagoPrefs.getString(PREF_KOMI, "7.5"));
+        board.setKomi((float) komi);
+
+        // 估算目数口径：子 + 确定死目(小目块) + 势力范围估算目（大空/争议区按势力归属）
+        int bs = board.countBlackStones();
+        int bDead = board.getDeadBlackTerritory();   // 确定死目
+        int bInf = board.getInfluenceBlackPoints();  // 势力范围估算目
+        int ws = board.countWhiteStones();
+        int wDead = board.getDeadWhiteTerritory();
+        int wInf = board.getInfluenceWhitePoints();
+        int blackTotal = bs + bDead + bInf;          // 黑合计（含势力，不含贴目）
+        int whiteTotal = ws + wDead + wInf;          // 白合计（含势力，不含贴目）
+
+        // 面积法（已含势力范围）所得相对黑方目差（含贴目）
+        float estDiffBlack = board.getEstimatedScoreDifference();
+        final int estLeadBlack = (int) Math.round(estDiffBlack);
+        final boolean blackToMove = board.getCurrentPlayer() == GoBoard.BLACK;
+
+        // 立即用启发式填充弹窗（秒出，直白列出黑/白/贴目 + 结论）
+        View view = getLayoutInflater().inflate(R.layout.dialog_score_estimate, null);
+
+        ((TextView) view.findViewById(R.id.tv_black)).setText(
+                String.format(Locale.US, "黑方　%d 目", blackTotal));
+        ((TextView) view.findViewById(R.id.tv_white)).setText(
+                String.format(Locale.US, "白方　%d 目", whiteTotal));
+        ((TextView) view.findViewById(R.id.tv_komi)).setText(
+                String.format(Locale.US, "黑方贴目　%.1f（黑 − 贴目 对比 白）", komi));
+
+        final TextView tvLead = view.findViewById(R.id.tv_lead);
+        if (estLeadBlack > 0) {
+            tvLead.setText(String.format(Locale.US, "黑领先 %d 目", estLeadBlack));
+        } else if (estLeadBlack < 0) {
+            tvLead.setText(String.format(Locale.US, "白领先 %d 目", -estLeadBlack));
+        } else {
+            tvLead.setText("双方均势");
+        }
+
+        final AlertDialog dialog = new AlertDialog.Builder(this)
             .setTitle("胜负估算")
-            .setMessage(scoreResult)
-            .setPositiveButton("标记死子", (dialog, which) -> {
-                showDeadStoneDialog();
-            })
-            .setNegativeButton("关闭", null)
-            .setNeutralButton("清除标记", (dialog, which) -> {
-                board.clearDeadStones();
-                Toast.makeText(this, "已清除死子标记", Toast.LENGTH_SHORT).show();
-                boardView.refresh();
-            })
+            .setView(view)
+            .setPositiveButton("确定", null)
             .show();
+        lastEstimateDialog = dialog;
+        lastEstimateLeadView = tvLead;
+
+        // 后台用低 visits KataGo 校正（≤1.5s），回来自动刷新领先目数
+        runEstimateRefresh(komi, blackToMove);
     }
 
     /**
-     * 显示标记死子对话框
+     * 后台引擎估算校正：用比实时分析更高（受 2 秒预算封顶）的 visits 跑一次 KataGo scoring，
+     * 回来刷新弹窗「领先目数」为引擎值（标注"引擎估算"）。仍为估算、不弹精算窗。
+     * 引擎忙时短等（最多 ~500ms）以争取计算机会；拿不到则保留启发式结果。
      */
-    private void showDeadStoneDialog() {
-        String[] options = {"标记黑棋死子", "标记白棋死子"};
-        
-        new AlertDialog.Builder(this)
-            .setTitle("选择标记")
-            .setItems(options, (dialog, which) -> {
-                if (which == 0) {
-                    // 标记黑棋死子
-                    Toast.makeText(this, "点击黑棋标记为死子", Toast.LENGTH_SHORT).show();
-                    boardView.setDeadStoneMarkMode(true, GoBoard.BLACK);
-                } else {
-                    // 标记白棋死子
-                    Toast.makeText(this, "点击白棋标记为死子", Toast.LENGTH_SHORT).show();
-                    boardView.setDeadStoneMarkMode(true, GoBoard.WHITE);
+    private void runEstimateRefresh(final double komi, final boolean blackToMove) {
+        if (katagoEngine == null || !enginePrepared) return;
+        final int token = ++estimateToken;
+        final int[][] snapshot = board.getBoard();
+        final int boardSize = snapshot.length;
+        final int nextPlayer = blackToMove ? GoBoard.BLACK : GoBoard.WHITE;
+        final int threads = Integer.parseInt(katagoPrefs.getString(PREF_THREADS, "1"));
+        final int strengthIdx = katagoPrefs.getInt(PREF_MAX_VISITS, 1);
+        // visits 比实时分析（≤100）更高，但封顶 200 以确保 2 秒内返回
+        final int estVisits = Math.min(STRENGTH_VISITS[strengthIdx] * 3, 200);
+
+        new Thread(() -> {
+            // 引擎忙时短等，争取一次真正的计算机会（不阻塞 UI）
+            long waited = 0;
+            while (engineBusy && waited < 500) {
+                try { Thread.sleep(50); waited += 50; } catch (InterruptedException ignored) { break; }
+            }
+            final double[] correction = {-1}; // -1 表示不可用
+            try {
+                if (engineBusy) return; // 仍忙，保留启发式结果
+                KataGoEngine.AnalysisResult r = katagoEngine.analyze(
+                        snapshot, boardSize, estVisits, nextPlayer, komi, threads, false);
+                if (r != null) {
+                    // rootScoreLead 为「当前行棋方」领先目数，折算为相对黑方
+                    correction[0] = blackToMove ? r.rootScoreLead : -r.rootScoreLead;
                 }
-            })
-            .setNegativeButton("取消", null)
-            .show();
+            } catch (Exception e) {
+                // 校正失败：保留启发式结果，不影响估算弹窗
+            }
+            final double corrected = correction[0];
+            if (token != estimateToken) return; // 已被新的估算取代
+            scoreEstimateHandler.post(() -> {
+                if (token != estimateToken) return;
+                if (lastEstimateDialog == null || !lastEstimateDialog.isShowing()) return;
+                if (lastEstimateLeadView == null) return;
+                if (corrected > -0.5) { // 取到有效校正
+                    int leadBlack = (int) Math.round(corrected);
+                    String txt;
+                    if (leadBlack > 0) {
+                        txt = String.format(Locale.US, "黑领先 %d 目", leadBlack);
+                    } else if (leadBlack < 0) {
+                        txt = String.format(Locale.US, "白领先 %d 目", -leadBlack);
+                    } else {
+                        txt = "双方均势";
+                    }
+                    lastEstimateLeadView.setText(txt);
+                }
+            });
+        }, "ScoreEstimateRefresh").start();
+
+        // 1.8s 后强制失效本次校正（即使引擎未回，也已用启发式秒出，不影响体验）
+        scoreEstimateHandler.postDelayed(() -> {
+            if (token == estimateToken) estimateToken = -1;
+        }, 1800);
     }
 
-
-    
     private void loadFile(Uri uri) {
         // 显示文件路径
         String filePath = uri.toString();
@@ -1368,6 +1465,11 @@ import java.util.Locale;
             katagoEngine = null;
         }
         enginePrepared = false;
+        // 取消可能仍在排队的估算校正，避免 Activity 销毁后刷新已释放的弹窗
+        scoreEstimateHandler.removeCallbacksAndMessages(null);
+        estimateToken = -1;
+        lastEstimateDialog = null;
+        lastEstimateLeadView = null;
     }
     
     /**

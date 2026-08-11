@@ -151,6 +151,17 @@ public class KataGoEngine {
     public synchronized AnalysisResult analyze(int[][] boardState, int boardSize, int maxVisits,
                                                  int nextPlayer, double komi, int numThreads)
             throws IOException, JSONException {
+        return analyze(boardState, boardSize, maxVisits, nextPlayer, komi, numThreads, true);
+    }
+
+    /**
+     * 分析当前局面。
+     * @param includePolicy 是否请求策略输出。估算场景关闭可显著减少引擎计算量（秒出）。
+     */
+    public synchronized AnalysisResult analyze(int[][] boardState, int boardSize, int maxVisits,
+                                                 int nextPlayer, double komi, int numThreads,
+                                                 boolean includePolicy)
+            throws IOException, JSONException {
 
         if (!initialized) throw new IOException("引擎尚未初始化，请先调用 prepare()");
 
@@ -162,7 +173,7 @@ public class KataGoEngine {
         req.put("maxVisits", maxVisits);
         req.put("numThreads", numThreads);
         req.put("komi", komi);
-        req.put("includePolicy", true);
+        req.put("includePolicy", includePolicy);
         req.put("includeOwnership", false);
         req.put("initialPlayer", nextPlayer == GoBoard.WHITE ? "W" : "B");
 

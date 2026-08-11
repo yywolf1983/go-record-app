@@ -586,110 +586,75 @@ public class BoardView extends View {
 
     private void drawAnalysisMarks(Canvas canvas) {
         if (analysisMarks == null || analysisMarks.isEmpty()) return;
-        float r = cellSize / 2 - 1;
 
-        // 最佳着法：醒目亮绿实心圆 + 白色粗体描边胜率（高对比、清晰可见）
-        final int BEST_FILL = Color.parseColor("#00C853"); // 亮绿
-        final int BEST_RING = Color.parseColor("#007A33"); // 深绿环
+        // 高亮色：单一强调色（亮绿），前三选用同一色系、半径与透明度逐步减小
+        // （第1选最大最亮，第2/3选依次递减），不使用多种彩色，简单明了
+        final int HIGHLIGHT = Color.parseColor("#00C853");
+        final int HIGHLIGHT_RING = Color.parseColor("#007A33");
 
-        Paint bestFillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        bestFillPaint.setColor(BEST_FILL);
-        bestFillPaint.setStyle(Paint.Style.FILL);
+        // 前三选「逐步减小」参数：索引 0/1/2 对应第 1/2/3 选
+        final float[] RADIUS_FACTOR = {0.95f, 0.72f, 0.52f}; // 半径递减
+        final int[]   ALPHA         = {235,   185,   140};   // 透明度递减
 
-        Paint bestRingPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        bestRingPaint.setColor(BEST_RING);
-        bestRingPaint.setStyle(Paint.Style.STROKE);
-        bestRingPaint.setStrokeWidth(3.5f);
+        Paint fillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        fillPaint.setColor(HIGHLIGHT);
+        fillPaint.setStyle(Paint.Style.FILL);
 
-        Paint bestTextPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        bestTextPaint.setColor(Color.WHITE);
-        bestTextPaint.setTextAlign(Paint.Align.CENTER);
-        bestTextPaint.setTextSize(cellSize * 0.52f);
-        bestTextPaint.setTypeface(Typeface.DEFAULT_BOLD);
-
-        Paint bestStrokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        bestStrokePaint.setColor(BEST_RING);
-        bestStrokePaint.setTextAlign(Paint.Align.CENTER);
-        bestStrokePaint.setTextSize(cellSize * 0.52f);
-        bestStrokePaint.setTypeface(Typeface.DEFAULT_BOLD);
-        bestStrokePaint.setStyle(Paint.Style.STROKE);
-        bestStrokePaint.setStrokeWidth(4);
-
-        // 其它候选：轻微色差环（蓝→青→靛→紫），按排名区分，圈内白色描边百分比
-        final int[] OTHER_RING_COLORS = {
-                Color.parseColor("#1E88E5"), // 蓝
-                Color.parseColor("#00ACC1"), // 青
-                Color.parseColor("#3949AB"), // 靛
-                Color.parseColor("#7E57C2"), // 紫
-                Color.parseColor("#00897B"), // 蓝绿
-        };
         Paint ringPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        ringPaint.setColor(HIGHLIGHT_RING);
         ringPaint.setStyle(Paint.Style.STROKE);
         ringPaint.setStrokeWidth(3.5f);
 
-        Paint ordTextPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        ordTextPaint.setTextAlign(Paint.Align.CENTER);
-        ordTextPaint.setTextSize(cellSize * 0.52f);
-        ordTextPaint.setTypeface(Typeface.DEFAULT_BOLD);
+        Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        textPaint.setColor(Color.WHITE);
+        textPaint.setTextAlign(Paint.Align.CENTER);
+        textPaint.setTypeface(Typeface.DEFAULT_BOLD);
 
-        Paint ordStrokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        ordStrokePaint.setColor(Color.WHITE);
-        ordStrokePaint.setTextAlign(Paint.Align.CENTER);
-        ordStrokePaint.setTextSize(cellSize * 0.52f);
-        ordStrokePaint.setTypeface(Typeface.DEFAULT_BOLD);
-        ordStrokePaint.setStyle(Paint.Style.STROKE);
-        ordStrokePaint.setStrokeWidth(4.5f);
+        Paint strokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        strokePaint.setColor(HIGHLIGHT_RING);
+        strokePaint.setTextAlign(Paint.Align.CENTER);
+        strokePaint.setTypeface(Typeface.DEFAULT_BOLD);
+        strokePaint.setStyle(Paint.Style.STROKE);
+        strokePaint.setStrokeWidth(4);
 
-        Paint wrTextPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        wrTextPaint.setColor(OTHER_RING_COLORS[0]);
-        wrTextPaint.setTextAlign(Paint.Align.CENTER);
-        wrTextPaint.setTextSize(cellSize * 0.26f);
-        wrTextPaint.setTypeface(Typeface.DEFAULT_BOLD);
-
-        Paint wrStrokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        wrStrokePaint.setColor(Color.WHITE);
-        wrStrokePaint.setTextAlign(Paint.Align.CENTER);
-        wrStrokePaint.setTextSize(cellSize * 0.26f);
-        wrStrokePaint.setStyle(Paint.Style.STROKE);
-        wrStrokePaint.setStrokeWidth(3);
+        // 第4选及以后：极淡小点，不抢视觉
+        Paint faintPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        faintPaint.setColor(HIGHLIGHT);
+        faintPaint.setStyle(Paint.Style.FILL);
+        faintPaint.setAlpha(55);
 
         for (AnalysisMark m : analysisMarks) {
             if (m.x < 0 || m.y < 0) continue; // 跳过 pass
             float px = marginLeft + m.x * cellSize;
             float py = marginTop + m.y * cellSize;
-            boolean best = (m.order == 0);
 
-            if (best) {
-                // 实心亮绿圆 + 深绿外环，醒目
-                canvas.drawCircle(px, py, cellSize * 0.32f, bestFillPaint);
-                canvas.drawCircle(px, py, r, bestRingPaint);
-                // 胜率：白字 + 深绿描边，任意背景均清晰
+            if (m.order >= 0 && m.order <= 2) {
+                // 前三选：高亮实心圆 + 深绿环，半径与透明度逐步减小
+                float rFactor = RADIUS_FACTOR[m.order];
+                int alpha = ALPHA[m.order];
+                float radius = cellSize * 0.32f * rFactor;
+                fillPaint.setAlpha(alpha);
+                canvas.drawCircle(px, py, radius, fillPaint);
+                canvas.drawCircle(px, py, radius, ringPaint);
+                // 胜率文字随选次略微缩小，保持清晰
+                float ts = cellSize * 0.52f * (1.0f - m.order * 0.12f);
+                textPaint.setTextSize(ts);
+                strokePaint.setTextSize(ts);
                 String label = (int) Math.round(m.winrate * 100) + "%";
-                Paint.FontMetrics fm = bestTextPaint.getFontMetrics();
+                Paint.FontMetrics fm = textPaint.getFontMetrics();
                 float off = (fm.descent - fm.ascent) / 2 - fm.descent;
-                canvas.drawText(label, px, py + off, bestStrokePaint);
-                canvas.drawText(label, px, py + off, bestTextPaint);
+                canvas.drawText(label, px, py + off, strokePaint);
+                canvas.drawText(label, px, py + off, textPaint);
             } else {
-                // 按排名取轻微色差的环色（蓝→青→靛→紫→蓝绿）
-                int otherRing = OTHER_RING_COLORS[
-                        Math.max(0, Math.min(m.order - 1, OTHER_RING_COLORS.length - 1))];
-                ringPaint.setColor(otherRing);
-                ordTextPaint.setColor(otherRing);
-                // 空心粗环
-                canvas.drawCircle(px, py, r, ringPaint);
-                // 只显示胜率百分比（不显示序号）：圈内白描边彩字百分比
-                String wr = (int) Math.round(m.winrate * 100) + "%";
-                Paint.FontMetrics ofm = ordTextPaint.getFontMetrics();
-                float ooff = (ofm.descent - ofm.ascent) / 2 - ofm.descent;
-                canvas.drawText(wr, px, py + ooff, ordStrokePaint);
-                canvas.drawText(wr, px, py + ooff, ordTextPaint);
+                // 第4选及以后：极小淡点
+                canvas.drawCircle(px, py, cellSize * 0.10f, faintPaint);
             }
         }
     }
 
     private void drawTerritory(Canvas canvas) {
         float territoryDotSize = cellSize / 4;
-        float influenceDotSize = cellSize / 5;
+        float influenceDotSize = cellSize / 4.0f;
 
         // --- 确定围空（BFS，较深色） ---
 
@@ -708,7 +673,8 @@ public class BoardView extends View {
         whiteBorderPaint.setStyle(Paint.Style.STROKE);
         whiteBorderPaint.setStrokeWidth(1);
 
-        java.util.List<GoBoard.Position> blackTerritory = board.getBlackTerritoryPositions();
+        // 仅「小目块」作为确定死目实心点；大块单色空不画实心点，改由下方势力范围呈现
+        java.util.List<GoBoard.Position> blackTerritory = board.getBlackTerritorySmallPositions();
         if (blackTerritory != null) {
             for (GoBoard.Position pos : blackTerritory) {
                 float px = marginLeft + pos.x * cellSize;
@@ -717,7 +683,7 @@ public class BoardView extends View {
             }
         }
 
-        java.util.List<GoBoard.Position> whiteTerritory = board.getWhiteTerritoryPositions();
+        java.util.List<GoBoard.Position> whiteTerritory = board.getWhiteTerritorySmallPositions();
         if (whiteTerritory != null) {
             for (GoBoard.Position pos : whiteTerritory) {
                 float px = marginLeft + pos.x * cellSize;
@@ -727,39 +693,42 @@ public class BoardView extends View {
             }
         }
 
-        // --- 势力范围（近距离检测，较浅色/小点） ---
+        // --- 势力范围（平方反比势力，按强度调节透明度/大小，强处浓且大、弱处淡且小） ---
+        // 用「全部势力点」统一绘制：黑/白明确归属点 + 中立争议点（灰色），确保整片势力范围都有点覆盖。
 
         Paint blackInfluencePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         blackInfluencePaint.setColor(Color.BLACK);
         blackInfluencePaint.setStyle(Paint.Style.FILL);
-        blackInfluencePaint.setAlpha(80);
 
         Paint whiteInfluencePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         whiteInfluencePaint.setColor(Color.WHITE);
         whiteInfluencePaint.setStyle(Paint.Style.FILL);
-        whiteInfluencePaint.setAlpha(80);
 
-        Paint whiteInfluenceBorderPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        whiteInfluenceBorderPaint.setColor(0xFF5D4037);
-        whiteInfluenceBorderPaint.setStyle(Paint.Style.STROKE);
-        whiteInfluenceBorderPaint.setStrokeWidth(1);
+        Paint neutralInfluencePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        neutralInfluencePaint.setColor(0xFF9E9E9E); // 中立争议区：灰色
+        neutralInfluencePaint.setStyle(Paint.Style.FILL);
 
-        java.util.List<GoBoard.Position> blackPotential = board.getBlackPotentialPositions();
-        if (blackPotential != null) {
-            for (GoBoard.Position pos : blackPotential) {
-                float px = marginLeft + pos.x * cellSize;
-                float py = marginTop + pos.y * cellSize;
-                canvas.drawCircle(px, py, influenceDotSize, blackInfluencePaint);
-            }
-        }
+        java.util.List<com.gosgf.app.model.ScoreEstimator.InfluencePoint> allInf =
+                board.getAllInfluencePoints();
+        if (allInf != null) {
+            for (com.gosgf.app.model.ScoreEstimator.InfluencePoint p : allInf) {
+                float px = marginLeft + p.x * cellSize;
+                float py = marginTop + p.y * cellSize;
 
-        java.util.List<GoBoard.Position> whitePotential = board.getWhitePotentialPositions();
-        if (whitePotential != null) {
-            for (GoBoard.Position pos : whitePotential) {
-                float px = marginLeft + pos.x * cellSize;
-                float py = marginTop + pos.y * cellSize;
-                canvas.drawCircle(px, py, influenceDotSize, whiteInfluencePaint);
-                canvas.drawCircle(px, py, influenceDotSize, whiteInfluenceBorderPaint);
+                Paint paint;
+                float alpha, r;
+                if (p.owner == com.gosgf.app.model.GoBoard.BLACK) {
+                    paint = blackInfluencePaint;
+                } else if (p.owner == com.gosgf.app.model.GoBoard.WHITE) {
+                    paint = whiteInfluencePaint;
+                } else {
+                    paint = neutralInfluencePaint;
+                }
+                // 强度 0~1：强处浓且大、弱处稍淡但仍清晰（半径下限 0.75 保证可见）
+                alpha = (p.owner == 0) ? (60 + 60 * p.strength) : (70 + 85 * p.strength);
+                r = influenceDotSize * (0.75f + 0.25f * p.strength);
+                paint.setAlpha((int) alpha);
+                canvas.drawCircle(px, py, r, paint);
             }
         }
     }

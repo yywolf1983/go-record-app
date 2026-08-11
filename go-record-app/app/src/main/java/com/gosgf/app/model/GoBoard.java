@@ -728,6 +728,31 @@ public class GoBoard {
 
     public List<Position> getDeadBlackStones() { ensureScoreEstimator(); return scoreEstimator.getDeadBlackStones(); }
     public List<Position> getDeadWhiteStones() { ensureScoreEstimator(); return scoreEstimator.getDeadWhiteStones(); }
+
+    /**
+     * 返回当前棋盘的副本，并把用户标记的死子（黑/白）挖掉（置为 EMPTY）。
+     * 用于把「用户已判定死亡」的棋子告知 KataGo：引擎分析的 rootScoreLead
+     * 会基于「死子已提走」的真实局面，从而尊重用户在棋盘上标的死子，而不依赖启发式。
+     */
+    public int[][] getBoardWithDeadStonesRemoved() {
+        ensureScoreEstimator();
+        int size = board.length;
+        int[][] result = new int[size][];
+        for (int y = 0; y < size; y++) {
+            result[y] = board[y].clone();
+        }
+        for (Position p : scoreEstimator.getDeadBlackStones()) {
+            if (p.y >= 0 && p.y < size && p.x >= 0 && p.x < size) {
+                result[p.y][p.x] = EMPTY;
+            }
+        }
+        for (Position p : scoreEstimator.getDeadWhiteStones()) {
+            if (p.y >= 0 && p.y < size && p.x >= 0 && p.x < size) {
+                result[p.y][p.x] = EMPTY;
+            }
+        }
+        return result;
+    }
     public List<Position> detectDeadStones(int player) { ensureScoreEstimator(); return scoreEstimator.detectDeadStones(player); }
 
     public void setKomi(float komi) { ensureScoreEstimator(); scoreEstimator.setKomi(komi); }
@@ -735,8 +760,17 @@ public class GoBoard {
 
     public List<Position> getBlackTerritoryPositions() { ensureScoreEstimator(); return scoreEstimator.getBlackTerritoryPositions(); }
     public List<Position> getWhiteTerritoryPositions() { ensureScoreEstimator(); return scoreEstimator.getWhiteTerritoryPositions(); }
+    /** 仅小计目块确定围空（面积≤阈值），作为确定死目实心点；大空不在此列 */
+    public List<Position> getBlackTerritorySmallPositions() { ensureScoreEstimator(); return scoreEstimator.getBlackTerritorySmallPositions(); }
+    public List<Position> getWhiteTerritorySmallPositions() { ensureScoreEstimator(); return scoreEstimator.getWhiteTerritorySmallPositions(); }
+    /** 势力范围估算目（黑/白），供弹窗拆分展示 */
+    public int getInfluenceBlackPoints() { ensureScoreEstimator(); return scoreEstimator.getInfluenceBlackPoints(); }
+    public int getInfluenceWhitePoints() { ensureScoreEstimator(); return scoreEstimator.getInfluenceWhitePoints(); }
+    public int getDeadBlackTerritory() { ensureScoreEstimator(); return scoreEstimator.getDeadBlackTerritory(); }
+    public int getDeadWhiteTerritory() { ensureScoreEstimator(); return scoreEstimator.getDeadWhiteTerritory(); }
     public List<Position> getBlackPotentialPositions() { ensureScoreEstimator(); return scoreEstimator.getBlackPotentialPositions(); }
     public List<Position> getWhitePotentialPositions() { ensureScoreEstimator(); return scoreEstimator.getWhitePotentialPositions(); }
+    public List<ScoreEstimator.InfluencePoint> getAllInfluencePoints() { ensureScoreEstimator(); return scoreEstimator.getAllInfluencePoints(); }
 
     public float getEstimatedScoreDifference() { ensureScoreEstimator(); return scoreEstimator.getEstimatedScoreDifference(); }
     public float getEstimatedBlackScore() { ensureScoreEstimator(); return scoreEstimator.getEstimatedBlackScore(); }
@@ -751,6 +785,8 @@ public class GoBoard {
     public List<Position> getBlackInfluencePositions() { ensureScoreEstimator(); return scoreEstimator.getBlackInfluencePositions(); }
     public List<Position> getWhiteInfluencePositions() { ensureScoreEstimator(); return scoreEstimator.getWhiteInfluencePositions(); }
     public float getInfluenceAt(int x, int y) { ensureScoreEstimator(); return scoreEstimator.getInfluenceAt(x, y); }
+    /** 空点势力强度（0~1），供棋盘按强弱渲染势力范围 */
+    public float getInfluenceStrengthAt(int x, int y) { ensureScoreEstimator(); return scoreEstimator.getPotentialStrengthAt(x, y); }
     public float getEstimatedScoreDifferenceWithInfluence() { ensureScoreEstimator(); return scoreEstimator.getEstimatedScoreDifference(); }
     public String getEstimatedScoreResultWithInfluence() { ensureScoreEstimator(); return scoreEstimator.getEstimatedScoreResult(); }
 

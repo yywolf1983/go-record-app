@@ -18,9 +18,6 @@ public class ScoreEstimator {
     private static final int BOARD_SIZE = 19;
     private static final float DEFAULT_KOMI = 6.5f;
 
-    // 势力检测最大距离（比之前的 6 小，避免过大）
-    private static final int INFLUENCE_MAX_DIST = 3;
-
     public static final int EMPTY = 0;
     public static final int BLACK = 1;
     public static final int WHITE = 2;
@@ -37,13 +34,24 @@ public class ScoreEstimator {
     private int cachedWhiteTerritory = 0;
     private List<GoBoard.Position> cachedBlackTerritoryPositions;
     private List<GoBoard.Position> cachedWhiteTerritoryPositions;
+    /** 仅「小目块」(面积≤阈值)，作为确定死目实心点显示；大块空不在此列，改由势力范围呈现 */
+    private List<GoBoard.Position> cachedBlackTerritorySmall;
+    private List<GoBoard.Position> cachedWhiteTerritorySmall;
 
     // ==================== 势力范围缓存 ====================
 
     private List<GoBoard.Position> cachedBlackPotentialPositions;
     private List<GoBoard.Position> cachedWhitePotentialPositions;
+    /** 全部势力点（含中立争议区），供棋盘逐点覆盖绘制 */
+    private List<InfluencePoint> cachedAllInfluencePoints;
+    /** 势力强度（归属确定性，0~1），与上面两个列表对应的空点索引一致；其他点为 0 */
+    private float[][] cachedPotentialStrength;
 
     // ==================== 死子估算缓存 ====================
+
+    /** 势力范围估算目（不含子/死子调整），用于弹窗拆分展示 */
+    private int cachedInfluenceBlack = 0;
+    private int cachedInfluenceWhite = 0;
 
     private List<GoBoard.Position> cachedDeadBlackByEstimator;
     private List<GoBoard.Position> cachedDeadWhiteByEstimator;
@@ -67,6 +75,7 @@ public class ScoreEstimator {
         cachedWhiteTerritoryPositions = null;
         cachedBlackPotentialPositions = null;
         cachedWhitePotentialPositions = null;
+        cachedAllInfluencePoints = null;
         cachedDeadBlackByEstimator = null;
         cachedDeadWhiteByEstimator = null;
         cachedEstimatedBlackScore = 0;
@@ -85,6 +94,10 @@ public class ScoreEstimator {
 
     // ==================== 确定围空（BFS Flood-Fill） ====================
 
+    /** 单色围空块面积超过该阈值即视为「大空」，不作为「确定死目」实心显示，
+     *  改由势力范围（强弱点）呈现，避免估算时「完全算死目」而失去势力分布。 */
+    private static final int LARGE_TERRITORY_THRESHOLD = 10;
+
     private void ensureTerritoryCalculated() {
         int currentHash = computeBoardHash();
         if (lastBoardHash == currentHash && cachedBlackTerritoryPositions != null) {
@@ -94,6 +107,8 @@ public class ScoreEstimator {
         lastBoardHash = currentHash;
         cachedBlackTerritoryPositions = new ArrayList<>();
         cachedWhiteTerritoryPositions = new ArrayList<>();
+        cachedBlackTerritorySmall = new ArrayList<>();
+        cachedWhiteTerritorySmall = new ArrayList<>();
 
         boolean[][] visited = new boolean[BOARD_SIZE][BOARD_SIZE];
 
@@ -105,8 +120,15 @@ public class ScoreEstimator {
 
                     if (owner == BLACK) {
                         cachedBlackTerritoryPositions.addAll(region);
+                        // 小块才是「确定死目」，大块归势力范围
+                        if (region.size() <= LARGE_TERRITORY_THRESHOLD) {
+                            cachedBlackTerritorySmall.addAll(region);
+                        }
                     } else if (owner == WHITE) {
                         cachedWhiteTerritoryPositions.addAll(region);
+                        if (region.size() <= LARGE_TERRITORY_THRESHOLD) {
+                            cachedWhiteTerritorySmall.addAll(region);
+                        }
                     }
                 }
             }
@@ -160,7 +182,7 @@ public class ScoreEstimator {
         return 0;
     }
 
-    // ==================== 势力范围（近距离检测，距离 ≤ INFLUENCE_MAX_DIST） ====================
+    // ==================== 势力范围（平方反比势力归属，覆盖全棋盘） ====================
 
     private void ensureInfluenceCalculated() {
         // 复用围空缓存的哈希
@@ -172,80 +194,71 @@ public class ScoreEstimator {
         lastBoardHash = currentHash;
         cachedBlackPotentialPositions = new ArrayList<>();
         cachedWhitePotentialPositions = new ArrayList<>();
+        cachedPotentialStrength = new float[BOARD_SIZE][BOARD_SIZE];
 
         // 确保围空也算过了（势力要排除已确认围空的点）
         if (cachedBlackTerritoryPositions == null) {
             ensureTerritoryCalculated();
         }
 
-        // 构建围空点集合用于快速排除
+        // 仅排除「小目块」确定围空；大块单色围空保留为势力范围（避免完全算死目）
         Set<GoBoard.Position> territorySet = new HashSet<>();
-        territorySet.addAll(cachedBlackTerritoryPositions);
-        territorySet.addAll(cachedWhiteTerritoryPositions);
+        if (cachedBlackTerritorySmall != null) territorySet.addAll(cachedBlackTerritorySmall);
+        if (cachedWhiteTerritorySmall != null) territorySet.addAll(cachedWhiteTerritorySmall);
 
         for (int y = 0; y < BOARD_SIZE; y++) {
             for (int x = 0; x < BOARD_SIZE; x++) {
                 if (board[y][x] != EMPTY) continue;
 
                 GoBoard.Position p = new GoBoard.Position(x, y);
-                // 已经是确认围空 → 跳过
+                // 已经是确认围空 → 跳过（由围空点单独渲染）
                 if (territorySet.contains(p)) continue;
 
-                int owner = proximityOwner(x, y);
+                int owner = potentialOwner(x, y);
                 if (owner == BLACK) {
                     cachedBlackPotentialPositions.add(p);
                 } else if (owner == WHITE) {
                     cachedWhitePotentialPositions.add(p);
                 }
+                // 记录归属确定性（0~1），供渲染强度使用
+                cachedPotentialStrength[y][x] = potentialStrength(x, y);
             }
         }
     }
 
     /**
-     * 对空交叉点 (x,y) 做 BFS，找出距离 ≤ INFLUENCE_MAX_DIST 内最近的棋子颜色。
-     * 如果在范围内只有一种颜色的棋子 → 返回该颜色，否则返回 0（中立）。
+     * 对空交叉点 (x,y) 用「平方反比势力值」判定归属。
+     * 只要有一方势力更强即判归该方——不做「争议中立过渡带」，避免势力范围被过度保守地丢弃。
+     * 仅当双方都完全够不着该点（势力均为 0）时才判为中立（这种点本就无归属）。
      */
-    private int proximityOwner(int startX, int startY) {
-        boolean[][] visited = new boolean[BOARD_SIZE][BOARD_SIZE];
-        LinkedList<int[]> queue = new LinkedList<>();  // [x, y, dist]
-        queue.add(new int[]{startX, startY, 0});
-        visited[startY][startX] = true;
+    private int potentialOwner(int x, int y) {
+        float bI = influenceValue(x, y, BLACK);
+        float wI = influenceValue(x, y, WHITE);
+        if (bI <= 0 && wI <= 0) return 0;          // 双方都够不着 → 中立
+        if (bI >= wI) return BLACK;                 // 黑更强（含相等）归黑
+        return WHITE;                              // 白更强归白
+    }
 
-        boolean foundBlack = false;
-        boolean foundWhite = false;
+    /**
+     * 势力强度（归属确定性，0~1）：极强处接近 1，越靠近争议边界越接近 0。
+     * 用于棋盘渲染时按强弱调节点的透明度/大小，使势力范围视觉更准确。
+     */
+    private float potentialStrength(int x, int y) {
+        float bI = influenceValue(x, y, BLACK);
+        float wI = influenceValue(x, y, WHITE);
+        if (bI <= 0 && wI <= 0) return 0;
+        float strong = Math.max(bI, wI);
+        float weak = Math.min(bI, wI);
+        if (strong <= 0) return 0;
+        return 1.0f - weak / strong;
+    }
 
-        int[][] directions = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
-
-        while (!queue.isEmpty()) {
-            int[] cur = queue.poll();
-            int dist = cur[2];
-
-            // 超过最大距离 → 只在此层内寻找
-            if (dist >= INFLUENCE_MAX_DIST) continue;
-
-            for (int[] dir : directions) {
-                int nx = cur[0] + dir[0];
-                int ny = cur[1] + dir[1];
-                if (nx < 0 || nx >= BOARD_SIZE || ny < 0 || ny >= BOARD_SIZE) continue;
-                if (visited[ny][nx]) continue;
-
-                if (board[ny][nx] == EMPTY) {
-                    visited[ny][nx] = true;
-                    queue.add(new int[]{nx, ny, dist + 1});
-                } else if (board[ny][nx] == BLACK) {
-                    visited[ny][nx] = true;
-                    foundBlack = true;
-                } else if (board[ny][nx] == WHITE) {
-                    visited[ny][nx] = true;
-                    foundWhite = true;
-                }
-            }
-        }
-
-        // 在范围内只接触一种颜色 → 该方势力
-        if (foundBlack && !foundWhite) return BLACK;
-        if (foundWhite && !foundBlack) return WHITE;
-        return 0;
+    /** 取空点 (x,y) 的势力强度（0~1）；非势力点返回 0 */
+    public float getPotentialStrengthAt(int x, int y) {
+        ensureInfluenceCalculated();
+        if (cachedPotentialStrength == null) return 0;
+        if (x < 0 || x >= BOARD_SIZE || y < 0 || y >= BOARD_SIZE) return 0;
+        return cachedPotentialStrength[y][x];
     }
 
     // ==================== 贴目 ====================
@@ -306,6 +319,17 @@ public class ScoreEstimator {
         return new ArrayList<>(cachedWhiteTerritoryPositions);
     }
 
+    /** 仅「小目块」确定围空（面积≤阈值），作为确定死目实心点显示；大空不含在内 */
+    public List<GoBoard.Position> getBlackTerritorySmallPositions() {
+        ensureTerritoryCalculated();
+        return new ArrayList<>(cachedBlackTerritorySmall);
+    }
+
+    public List<GoBoard.Position> getWhiteTerritorySmallPositions() {
+        ensureTerritoryCalculated();
+        return new ArrayList<>(cachedWhiteTerritorySmall);
+    }
+
     // ==================== 势力范围（近距离检测） ====================
 
     public List<GoBoard.Position> getBlackPotentialPositions() {
@@ -316,6 +340,44 @@ public class ScoreEstimator {
     public List<GoBoard.Position> getWhitePotentialPositions() {
         ensureInfluenceCalculated();
         return new ArrayList<>(cachedWhitePotentialPositions);
+    }
+
+    /**
+     * 势力点（含中立争议区），供棋盘逐点绘制覆盖全势力范围。
+     * owner：BLACK / WHITE / 0（中立）；strength：归属确定性 0~1（中立点取双方接近度，仍按强弱近似）。
+     * 注意：小目块确定围空已单独画实心点，此处不再包含（避免与确定目重叠）。
+     */
+    public List<InfluencePoint> getAllInfluencePoints() {
+        ensureInfluenceCalculated();
+        if (cachedAllInfluencePoints != null) return new ArrayList<>(cachedAllInfluencePoints);
+
+        cachedAllInfluencePoints = new ArrayList<>();
+        Set<GoBoard.Position> smallSet = new HashSet<>();
+        if (cachedBlackTerritorySmall != null) smallSet.addAll(cachedBlackTerritorySmall);
+        if (cachedWhiteTerritorySmall != null) smallSet.addAll(cachedWhiteTerritorySmall);
+
+        for (int y = 0; y < BOARD_SIZE; y++) {
+            for (int x = 0; x < BOARD_SIZE; x++) {
+                if (board[y][x] != EMPTY) continue;
+                GoBoard.Position p = new GoBoard.Position(x, y);
+                if (smallSet.contains(p)) continue; // 小目块由确定围空单独绘制
+                int owner = potentialOwner(x, y);
+                float strength = potentialStrength(x, y);
+                cachedAllInfluencePoints.add(new InfluencePoint(x, y, owner, strength));
+            }
+        }
+        return new ArrayList<>(cachedAllInfluencePoints);
+    }
+
+    /** 单个势力点：坐标 + 归属方(1黑/2白/0中立) + 强度(0~1) */
+    public static class InfluencePoint {
+        public final int x;
+        public final int y;
+        public final int owner;
+        public final float strength;
+        public InfluencePoint(int x, int y, int owner, float strength) {
+            this.x = x; this.y = y; this.owner = owner; this.strength = strength;
+        }
     }
 
     // ==================== 旧影响力 API 保持兼容 ====================
@@ -413,24 +475,26 @@ public class ScoreEstimator {
     }
 
     /**
-     * 连续势力值：点 (x,y) 到最近同色棋子（曼哈顿距离 ≤ 2）的强度。
-     * 距离 0/1/2 分别返回 1.5/1.0/0.5，够不着返回 0。用于争议点归属分配。
+     * 连续势力值：点 (x,y) 处某颜色的「距离加权势力」。
+     * 对所有该色棋子求和，近处棋子贡献大、远处快速衰减：
+     *   weight = 1/(d+1) + 0.5/(d²+1)
+     * 比纯平方反比更「果断」——近距棋子的主导权更强，远端双方趋近 0 的模糊中立区被压缩，
+     * 从而让势力归属更明确、估算不再过于保守（更接近真实围空）。
+     * 用于争议点归一化分配与势力归属判定。
      */
     private float influenceValue(int x, int y, int player) {
-        int maxDist = 2;
-        int best = 99;
-        for (int dy = -maxDist; dy <= maxDist; dy++) {
-            for (int dx = -maxDist; dx <= maxDist; dx++) {
-                int nx = x + dx, ny = y + dy;
-                if (nx < 0 || ny < 0 || nx >= BOARD_SIZE || ny >= BOARD_SIZE) continue;
-                if (board[ny][nx] == player) {
-                    int dist = Math.abs(dx) + Math.abs(dy);
-                    if (dist <= maxDist && dist < best) best = dist;
-                }
+        float sum = 0;
+        for (int yy = 0; yy < BOARD_SIZE; yy++) {
+            for (int xx = 0; xx < BOARD_SIZE; xx++) {
+                if (board[yy][xx] != player) continue;
+                int dx = xx - x;
+                int dy = yy - y;
+                int d = (int) Math.sqrt(dx * dx + dy * dy);
+                float w = 1.0f / (d + 1) + 0.5f / (dx * dx + dy * dy + 1);
+                sum += w;
             }
         }
-        if (best > maxDist) return 0;
-        return (3 - best) * 0.5f;
+        return sum;
     }
 
     /**
@@ -619,6 +683,9 @@ public class ScoreEstimator {
     }
 
     private boolean isGroupDead(List<GoBoard.Position> group, int player) {
+        // 有真眼的群视为活棋，避免误杀活形（典型如两眼活、做眼求活）
+        if (groupHasEye(group, player)) return false;
+
         int liberties = countLiberties(group);
         if (liberties == 0) return true;
         if (liberties == 1 && group.size() <= 3) return true;
@@ -635,6 +702,36 @@ public class ScoreEstimator {
         }
         if (group.size() <= 6 && liberties == 1) {
             return true;
+        }
+        return false;
+    }
+
+    /** 群内是否含至少一个真眼（四邻无对方子，且至少一对角为己方/墙） */
+    private boolean groupHasEye(List<GoBoard.Position> group, int player) {
+        Set<GoBoard.Position> set = new HashSet<>(group);
+        int[][] dirs = {{0, 1}, {0, -1}, {1, 0}, {-1, 0}};
+        int[] ddx = {-1, 1, 1, -1};
+        int[] ddy = {-1, -1, 1, 1};
+        for (GoBoard.Position pos : group) {
+            // 自身四周需无对方子
+            boolean eyeLike = true;
+            for (int[] d : dirs) {
+                int nx = pos.x + d[0], ny = pos.y + d[1];
+                if (nx < 0 || nx >= BOARD_SIZE || ny < 0 || ny >= BOARD_SIZE) continue;
+                if (board[ny][nx] != player && board[ny][nx] != EMPTY) {
+                    eyeLike = false;
+                    break;
+                }
+            }
+            if (!eyeLike) continue;
+            // 对角至少一个为己方或墙
+            boolean okDiag = false;
+            for (int i = 0; i < 4; i++) {
+                int nx = pos.x + ddx[i], ny = pos.y + ddy[i];
+                if (nx < 0 || nx >= BOARD_SIZE || ny < 0 || ny >= BOARD_SIZE) { okDiag = true; break; }
+                if (board[ny][nx] == player) { okDiag = true; break; }
+            }
+            if (okDiag) return true;
         }
         return false;
     }
@@ -691,20 +788,53 @@ public class ScoreEstimator {
     }
 
     /**
-     * 估算目数 = 活子 + 围空 - 被提死子（+ 贴目给白方）
+     * 估算目数 = 活子 + 确定死目(小目块) + 势力范围估算目 - 被提死子（+ 贴目给白方）。
+     * 把「势力范围」也计入主数字：大块单色空与争议区不再算死定目，而是按平方反比势力估算归属。
      */
     private void calculateEstimatedScore() {
         int blackStones = countBlackStones();
         int whiteStones = countWhiteStones();
+        ensureTerritoryCalculated();
 
-        int blackTerritory = countBlackTerritory();
-        int whiteTerritory = countWhiteTerritory();
+        // 确定死目：仅小目块（面积≤阈值）
+        int blackTerritory = cachedBlackTerritorySmall.size();
+        int whiteTerritory = cachedWhiteTerritorySmall.size();
+
+        // 势力范围估算目：除小目块外的空点按势力强弱归属
+        int[] influence = computeInfluenceTerritory();
 
         int estimatedDeadBlack = cachedDeadBlackByEstimator.size();
         int estimatedDeadWhite = cachedDeadWhiteByEstimator.size();
 
-        cachedEstimatedBlackScore = blackStones - estimatedDeadBlack + estimatedDeadWhite + blackTerritory;
-        cachedEstimatedWhiteScore = whiteStones - estimatedDeadWhite + estimatedDeadBlack + whiteTerritory + komi;
+        cachedInfluenceBlack = influence[0];
+        cachedInfluenceWhite = influence[1];
+        cachedEstimatedBlackScore = blackStones - estimatedDeadBlack + estimatedDeadWhite
+                + blackTerritory + influence[0];
+        cachedEstimatedWhiteScore = whiteStones - estimatedDeadWhite + estimatedDeadBlack
+                + whiteTerritory + influence[1] + komi;
+    }
+
+    /**
+     * 统计势力范围估算目：遍历所有空点，排除「小目块」确定围空，其余按平方反比势力归属，
+     * 返回 [blackInfluence, whiteInfluence]。中立（争议）点不计入任一方。
+     */
+    private int[] computeInfluenceTerritory() {
+        Set<GoBoard.Position> smallSet = new HashSet<>();
+        if (cachedBlackTerritorySmall != null) smallSet.addAll(cachedBlackTerritorySmall);
+        if (cachedWhiteTerritorySmall != null) smallSet.addAll(cachedWhiteTerritorySmall);
+
+        int blackInf = 0, whiteInf = 0;
+        for (int y = 0; y < BOARD_SIZE; y++) {
+            for (int x = 0; x < BOARD_SIZE; x++) {
+                if (board[y][x] != EMPTY) continue;
+                GoBoard.Position p = new GoBoard.Position(x, y);
+                if (smallSet.contains(p)) continue; // 小目块已算确定目
+                int owner = potentialOwner(x, y);
+                if (owner == BLACK) blackInf++;
+                else if (owner == WHITE) whiteInf++;
+            }
+        }
+        return new int[]{blackInf, whiteInf};
     }
 
     // ==================== 估算结果 API ====================
@@ -717,6 +847,28 @@ public class ScoreEstimator {
     public float getEstimatedBlackScore() {
         ensureEstimationCalculated();
         return cachedEstimatedBlackScore;
+    }
+
+    /** 势力范围估算目（黑/白，不含子与死子调整），供弹窗拆分展示 */
+    public int getInfluenceBlackPoints() {
+        ensureEstimationCalculated();
+        return cachedInfluenceBlack;
+    }
+
+    public int getInfluenceWhitePoints() {
+        ensureEstimationCalculated();
+        return cachedInfluenceWhite;
+    }
+
+    /** 确定死目（小目块）目数 */
+    public int getDeadBlackTerritory() {
+        ensureTerritoryCalculated();
+        return cachedBlackTerritorySmall.size();
+    }
+
+    public int getDeadWhiteTerritory() {
+        ensureTerritoryCalculated();
+        return cachedWhiteTerritorySmall.size();
     }
 
     public float getEstimatedWhiteScore() {
