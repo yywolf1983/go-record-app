@@ -587,68 +587,84 @@ public class BoardView extends View {
     private void drawAnalysisMarks(Canvas canvas) {
         if (analysisMarks == null || analysisMarks.isEmpty()) return;
 
-        // 高亮色：单一强调色（亮绿），前三选用同一色系、半径与透明度逐步减小
-        // （第1选最大最亮，第2/3选依次递减），不使用多种彩色，简单明了
-        final int HIGHLIGHT = Color.parseColor("#00C853");
-        final int HIGHLIGHT_RING = Color.parseColor("#007A33");
+        // 大小一致；颜色按排名渐进（同绿系，前三选由深到浅且阶梯明显，其余统一稍浅但仍清晰）；文字白字+深绿描边清晰可读
+        final float RADIUS = cellSize * 0.42f;   // 所有标记大小一致（放大，便于识别）
+        final float NUM_SIZE = cellSize * 0.58f;      // 数字字号（加大）
+        final float PERCENT_SIZE = cellSize * 0.34f;  // 百分号字号（减小）
 
-        // 前三选「逐步减小」参数：索引 0/1/2 对应第 1/2/3 选
-        final float[] RADIUS_FACTOR = {0.95f, 0.72f, 0.52f}; // 半径递减
-        final int[]   ALPHA         = {235,   185,   140};   // 透明度递减
+        // 前三选颜色渐进（深→浅，阶梯明显），其余统一稍浅但可见
+        final int[] FILL_COLORS = {
+                Color.parseColor("#00897B"), // 第1选 深青绿（最醒目）
+                Color.parseColor("#43A047"), // 第2选 中绿
+                Color.parseColor("#9CCC65"), // 第3选 浅绿（与前两选明显区分）
+                Color.parseColor("#C5E1A5"), // 第4选及以后 稍浅但清晰可见
+        };
+        final int RING_COLOR = Color.parseColor("#1B5E20"); // 深绿描边，保证文字对比
+        final int TEXT_COLOR = Color.WHITE;
 
         Paint fillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        fillPaint.setColor(HIGHLIGHT);
         fillPaint.setStyle(Paint.Style.FILL);
 
         Paint ringPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        ringPaint.setColor(HIGHLIGHT_RING);
+        ringPaint.setColor(RING_COLOR);
         ringPaint.setStyle(Paint.Style.STROKE);
-        ringPaint.setStrokeWidth(3.5f);
+        ringPaint.setStrokeWidth(5f);
 
-        Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        textPaint.setColor(Color.WHITE);
-        textPaint.setTextAlign(Paint.Align.CENTER);
-        textPaint.setTypeface(Typeface.DEFAULT_BOLD);
+        Paint numPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        numPaint.setColor(TEXT_COLOR);
+        numPaint.setTextAlign(Paint.Align.LEFT);
+        numPaint.setTextSize(NUM_SIZE);
+        numPaint.setTypeface(Typeface.DEFAULT_BOLD);
 
-        Paint strokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        strokePaint.setColor(HIGHLIGHT_RING);
-        strokePaint.setTextAlign(Paint.Align.CENTER);
-        strokePaint.setTypeface(Typeface.DEFAULT_BOLD);
-        strokePaint.setStyle(Paint.Style.STROKE);
-        strokePaint.setStrokeWidth(4);
+        Paint percentPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        percentPaint.setColor(TEXT_COLOR);
+        percentPaint.setTextAlign(Paint.Align.LEFT);
+        percentPaint.setTextSize(PERCENT_SIZE);
+        percentPaint.setTypeface(Typeface.DEFAULT_BOLD);
 
-        // 第4选及以后：极淡小点，不抢视觉
-        Paint faintPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        faintPaint.setColor(HIGHLIGHT);
-        faintPaint.setStyle(Paint.Style.FILL);
-        faintPaint.setAlpha(55);
+        Paint numStrokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        numStrokePaint.setColor(RING_COLOR);
+        numStrokePaint.setTextAlign(Paint.Align.LEFT);
+        numStrokePaint.setTextSize(NUM_SIZE);
+        numStrokePaint.setTypeface(Typeface.DEFAULT_BOLD);
+        numStrokePaint.setStyle(Paint.Style.STROKE);
+        numStrokePaint.setStrokeWidth(5);
+
+        Paint percentStrokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        percentStrokePaint.setColor(RING_COLOR);
+        percentStrokePaint.setTextAlign(Paint.Align.LEFT);
+        percentStrokePaint.setTextSize(PERCENT_SIZE);
+        percentStrokePaint.setTypeface(Typeface.DEFAULT_BOLD);
+        percentStrokePaint.setStyle(Paint.Style.STROKE);
+        percentStrokePaint.setStrokeWidth(4);
 
         for (AnalysisMark m : analysisMarks) {
             if (m.x < 0 || m.y < 0) continue; // 跳过 pass
             float px = marginLeft + m.x * cellSize;
             float py = marginTop + m.y * cellSize;
 
-            if (m.order >= 0 && m.order <= 2) {
-                // 前三选：高亮实心圆 + 深绿环，半径与透明度逐步减小
-                float rFactor = RADIUS_FACTOR[m.order];
-                int alpha = ALPHA[m.order];
-                float radius = cellSize * 0.32f * rFactor;
-                fillPaint.setAlpha(alpha);
-                canvas.drawCircle(px, py, radius, fillPaint);
-                canvas.drawCircle(px, py, radius, ringPaint);
-                // 胜率文字随选次略微缩小，保持清晰
-                float ts = cellSize * 0.52f * (1.0f - m.order * 0.12f);
-                textPaint.setTextSize(ts);
-                strokePaint.setTextSize(ts);
-                String label = (int) Math.round(m.winrate * 100) + "%";
-                Paint.FontMetrics fm = textPaint.getFontMetrics();
-                float off = (fm.descent - fm.ascent) / 2 - fm.descent;
-                canvas.drawText(label, px, py + off, strokePaint);
-                canvas.drawText(label, px, py + off, textPaint);
-            } else {
-                // 第4选及以后：极小淡点
-                canvas.drawCircle(px, py, cellSize * 0.10f, faintPaint);
-            }
+            int order = Math.max(0, m.order);
+            int fill = FILL_COLORS[Math.min(order, FILL_COLORS.length - 1)];
+
+            fillPaint.setColor(fill);
+            canvas.drawCircle(px, py, RADIUS, fillPaint);
+            canvas.drawCircle(px, py, RADIUS, ringPaint);
+
+            String numStr = String.valueOf((int) Math.round(m.winrate * 100));
+            String pctStr = "%";
+            float numW = numPaint.measureText(numStr);
+            float pctW = percentPaint.measureText(pctStr);
+            float totalW = numW + pctW;
+            float startX = px - totalW / 2f;
+            float numY = py + NUM_SIZE * 0.5f - NUM_SIZE * 0.12f; // 按数字基线居中
+            // 百分号下对齐：底部与数字底部一致
+            float pctY = numY + numPaint.descent() - percentPaint.descent();
+            float pctX = startX + numW;
+
+            canvas.drawText(numStr, startX, numY, numStrokePaint);   // 深绿描边
+            canvas.drawText(numStr, startX, numY, numPaint);          // 白字
+            canvas.drawText(pctStr, pctX, pctY, percentStrokePaint);
+            canvas.drawText(pctStr, pctX, pctY, percentPaint);
         }
     }
 
