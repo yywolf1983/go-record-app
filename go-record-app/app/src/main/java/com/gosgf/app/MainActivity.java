@@ -87,6 +87,7 @@ import java.util.Locale;
     private android.net.Uri pendingCameraUri = null;
     private ActivityResultLauncher<Intent> cameraLauncher;
     private ActivityResultLauncher<Intent> galleryLauncher;
+    private ActivityResultLauncher<Intent> cropLauncher;
     private com.gosgf.app.util.MokuRecognizer mokuRecognizer = null;
     private AlertDialog mokuProgressDialog = null;
 
@@ -272,7 +273,7 @@ import java.util.Locale;
                 Log.i(TAG, "cameraLauncher 回调: resultCode=" + result.getResultCode()
                         + " pendingCameraUri=" + pendingCameraUri);
                 if (result.getResultCode() == RESULT_OK && pendingCameraUri != null) {
-                    runRecognition(pendingCameraUri);
+                    startCropActivity(pendingCameraUri);
                 }
                 pendingCameraUri = null;
             }
@@ -292,7 +293,20 @@ import java.util.Locale;
                             getContentResolver().takePersistableUriPermission(uri,
                                     Intent.FLAG_GRANT_READ_URI_PERMISSION);
                         } catch (SecurityException ignored) {}
-                        runRecognition(uri);
+                        startCropActivity(uri);
+                    }
+                }
+            }
+        );
+        // 裁剪完成后识别
+        cropLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            result -> {
+                Log.i(TAG, "cropLauncher 回调: resultCode=" + result.getResultCode());
+                if (result.getResultCode() == RESULT_OK && result.getData() != null) {
+                    String path = result.getData().getStringExtra(CropActivity.EXTRA_OUTPUT_PATH);
+                    if (path != null) {
+                        runRecognition(android.net.Uri.fromFile(new java.io.File(path)));
                     }
                 }
             }
@@ -986,6 +1000,13 @@ import java.util.Locale;
                 != android.content.pm.PackageManager.PERMISSION_GRANTED) return;
         if (requestCode == 1010) startCameraCapture();
         else if (requestCode == 1011) startGalleryPick();
+    }
+
+    /** 启动裁剪 Activity, 用户手动框选棋盘区域后再识别 */
+    private void startCropActivity(android.net.Uri uri) {
+        Intent intent = new Intent(this, CropActivity.class);
+        intent.putExtra(CropActivity.EXTRA_INPUT_URI, uri);
+        cropLauncher.launch(intent);
     }
 
     /** 选图/拍照后走 ONNX 模型识别流程 (与 kaya MokuDetector.detect 一致)。 */

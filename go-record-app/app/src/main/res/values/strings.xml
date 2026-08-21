@@ -43,6 +43,10 @@
     <string name="scan_no_stones">未识别到棋子</string>
     <string name="scan_failed">识别失败：%1$s</string>
     <string name="scan_only_19">仅支持 19 路棋盘识别</string>
+    <string name="crop_title">裁剪棋盘区域</string>
+    <string name="crop_cancel">取消</string>
+    <string name="crop_rotate">旋转</string>
+    <string name="crop_confirm">确认裁剪</string>
     <string name="place_stones">摆子</string>
     <string name="mark">标记</string>
     <string name="comment">注释</string>
