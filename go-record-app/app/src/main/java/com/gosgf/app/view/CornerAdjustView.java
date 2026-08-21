@@ -40,7 +40,6 @@ public class CornerAdjustView extends View {
     private final Paint handlePaint = new Paint();
     private final Paint labelPaint = new Paint();
     private final Paint linkPaint = new Paint();
-    private final Paint dotPaint = new Paint();
 
     public CornerAdjustView(Context context) {
         this(context, null);
@@ -79,11 +78,6 @@ public class CornerAdjustView extends View {
         linkPaint.setStrokeWidth(2f);
         linkPaint.setAntiAlias(true);
         linkPaint.setPathEffect(new android.graphics.DashPathEffect(new float[]{10f, 6f}, 0));
-
-        // 实际角点标记(小十字)
-        dotPaint.setColor(Color.parseColor("#FF5722"));
-        dotPaint.setStyle(Paint.Style.FILL);
-        dotPaint.setAntiAlias(true);
 
         for (int i = 0; i < 4; i++) handles[i] = new PointF(0, 0);
     }
@@ -207,14 +201,12 @@ public class CornerAdjustView extends View {
         canvas.drawLine(handles[0].x, handles[0].y, handles[2].x, handles[2].y, diag);
         canvas.drawLine(handles[1].x, handles[1].y, handles[3].x, handles[3].y, diag);
 
-        // 每个角: 实际角点标记 + 虚线连接 + 偏移手柄
+        // 每个角: 虚线连接(实际角点 → 偏移手柄)
         String[] labels = {"TL", "TR", "BR", "BL"};
         for (int i = 0; i < 4; i++) {
             float[] hp = getHandlePos(i);
             // 虚线连接(实际角点 → 手柄)
             canvas.drawLine(handles[i].x, handles[i].y, hp[0], hp[1], linkPaint);
-            // 实际角点标记(橙色小圆点, 标明真实角点位置)
-            canvas.drawCircle(handles[i].x, handles[i].y, 8f, dotPaint);
             // 偏移手柄(白色半透明大圆 + 标签)
             canvas.drawCircle(hp[0], hp[1], HANDLE_RADIUS, handlePaint);
             canvas.drawText(labels[i], hp[0], hp[1] + 10f, labelPaint);
