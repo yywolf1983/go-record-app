@@ -36,6 +36,13 @@
     <string name="save_game">保存</string>
     <string name="show_numbers">步数</string>
     <string name="estimate">估算</string>
+    <string name="scan_board">识别</string>
+    <string name="scan_camera">拍照识别</string>
+    <string name="scan_gallery">相册识别</string>
+    <string name="scan_recognizing">识别中…</string>
+    <string name="scan_no_stones">未识别到棋子</string>
+    <string name="scan_failed">识别失败：%1$s</string>
+    <string name="scan_only_19">仅支持 19 路棋盘识别</string>
     <string name="place_stones">摆子</string>
     <string name="mark">标记</string>
     <string name="comment">注释</string>

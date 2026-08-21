@@ -7,6 +7,7 @@ import android.content.Intent;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.net.Uri;
+import android.util.Log;
 import android.widget.FrameLayout;
 import android.os.Bundle;
 import android.os.Handler;
@@ -59,7 +60,9 @@ import java.util.Locale;
     private TextView moveCountText; // 步数显示
     private BoardView.OnBranchSelectListener branchSelectListener;
     private BoardView.OnBranchDeleteListener branchDeleteListener;
-    
+
+    private static final String TAG = "MainActivity";
+
     private ImageButton btnNew;
     private ImageButton btnLoad;
     private ImageButton btnSave;
@@ -78,6 +81,17 @@ import java.util.Locale;
     private boolean isPlaceMode = false;
     private TextView btnPlaceLabel;
     private java.util.List<View> toggleButtons; // 摆子时禁用的按钮
+
+    // 拍照识别：相机/相册入口
+    private ImageButton btnScan;
+    private android.net.Uri pendingCameraUri = null;
+    private ActivityResultLauncher<Intent> cameraLauncher;
+    private ActivityResultLauncher<Intent> galleryLauncher;
+    private ActivityResultLauncher<Intent> cropActivityLauncher;  // 识别前自定义裁剪
+    private com.gosgf.app.util.MokuRecognizer mokuRecognizer;
+    private Thread mokuInitThread = null;
+    private boolean mokuLoading = false;
+    private AlertDialog mokuProgressDialog = null;
 
     // Activity Result Launchers
     private ActivityResultLauncher<Intent> loadFileLauncher;
@@ -253,6 +267,55 @@ import java.util.Locale;
                 }
             }
         );
+
+        // 拍照识别：相机
+        cameraLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            result -> {
+                Log.i(TAG, "cameraLauncher 回调: resultCode=" + result.getResultCode()
+                        + " pendingCameraUri=" + pendingCameraUri);
+                if (result.getResultCode() == RESULT_OK && pendingCameraUri != null) {
+                    startCropActivity(pendingCameraUri);
+                }
+                pendingCameraUri = null;
+            }
+        );
+        // 拍照识别：相册
+        galleryLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            result -> {
+                Log.i(TAG, "galleryLauncher 回调: resultCode=" + result.getResultCode());
+                if (result.getResultCode() == RESULT_OK) {
+                    android.net.Uri uri = com.gosgf.app.util.ImageSourcePicker
+                            .resolvePickedUri(result.getData());
+                    Log.i(TAG, "galleryLauncher resolvePickedUri → " + uri);
+                    if (uri != null) {
+                        // 持久化读权限，避免后续访问失败
+                        try {
+                            getContentResolver().takePersistableUriPermission(uri,
+                                    Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                        } catch (SecurityException ignored) {}
+                        startCropActivity(uri);
+                    }
+                }
+            }
+        );
+        // 识别前自定义裁剪(CropActivity)：用户圈定棋盘方位 → 裁剪结果 → 识别
+        cropActivityLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            result -> {
+                Log.i(TAG, "cropActivityLauncher 回调: resultCode=" + result.getResultCode());
+                if (result.getResultCode() == RESULT_OK && result.getData() != null) {
+                    String cropUri = result.getData()
+                            .getStringExtra(CropActivity.EXTRA_CROP_URI);
+                    if (cropUri != null) {
+                        runRecognition(android.net.Uri.parse(cropUri));
+                        return;
+                    }
+                }
+                Log.w(TAG, "裁剪取消或失败, 放弃识别");
+            }
+        );
     }
 
     /** 从用户选择的 URI 复制模型到应用私有目录，并保存绝对路径 */
@@ -373,7 +436,11 @@ import java.util.Locale;
 
         btnComment.setOnClickListener(v -> onComment());
         btnMark.setOnClickListener(v -> onMark());
-        btnPlace.setOnClickListener(v -> onPlace());
+        // btnPlace 融合摆子+识别:摆子模式下点击=完成摆子,非摆子模式点击=弹出选项菜单
+        btnPlace.setOnClickListener(v -> {
+            if (isPlaceMode) onPlace();
+            else showPlaceOrScanMenu();
+        });
         btnDeleteBranch.setOnClickListener(v -> onDeleteBranch());
         btnScore.setOnClickListener(v -> onScore());
         btnShowNumbers.setOnClickListener(v -> onShowNumbers());
@@ -775,16 +842,18 @@ import java.util.Locale;
             // === 进入摆子模式 ===
             // 把当前棋盘状态同步到座子列表，以当前局面为基础修改
             board.syncBoardToHandicap();
-            // 禁用其他按钮，改变摆子按钮外观
+            // 禁用其他按钮，改变摆子按钮外观(红色醒目)
             setButtonsEnabledForSetup(false);
             btnPlaceLabel.setText("完成");
-            btnPlace.setBackgroundResource(R.drawable.btn_primary);
-            Toast.makeText(this, "在当前局面上摆子（黑棋）", Toast.LENGTH_SHORT).show();
+            btnPlaceLabel.setTextColor(android.graphics.Color.WHITE);
+            btnPlace.setBackgroundResource(R.drawable.btn_place_active);
+            // 不在此处 Toast,Toast 由调用方控制(避免识别后重复提示)
         } else {
             // === 完成摆子 ===
             // 恢复按钮外观
             setButtonsEnabledForSetup(true);
             btnPlaceLabel.setText("摆子");
+            btnPlaceLabel.setTextColor(getResources().getColor(R.color.text_secondary));
             btnPlace.setBackgroundResource(R.drawable.btn_secondary);
 
             // 保存当前座子（必须在后台线程之前因为board会被newGame重置）
@@ -852,6 +921,328 @@ import java.util.Locale;
             btn.setAlpha(alpha);
         }
     }
+
+    // ==================== 拍照识别 (Moku ONNX) ====================
+
+    /** 点击识别按钮：弹出"拍照/相册"选择对话框。 */
+    /** 弹出菜单选择 [摆子 / 拍照识别 / 相册识别],融合原 btnPlace + btnScan。 */
+    private void showPlaceOrScanMenu() {
+        String[] options = {
+            getString(R.string.place_stones),
+            getString(R.string.scan_camera),
+            getString(R.string.scan_gallery)
+        };
+        new AlertDialog.Builder(this)
+            .setTitle(R.string.place_stones)
+            .setItems(options, (dialog, which) -> {
+                switch (which) {
+                    case 0:
+                        onPlace();
+                        Toast.makeText(this, "在当前局面上摆子(黑棋),完成后点'完成'按钮",
+                                Toast.LENGTH_SHORT).show();
+                        break;
+                    case 1: startCameraCapture(); break;
+                    case 2: startGalleryPick(); break;
+                }
+            })
+            .show();
+    }
+
+    /** 兼容老调用入口:直接弹出拍照/相册选项(已不再被 btnScan 触发,保留供其他调用)。 */
+    private void onScanClick() {
+        String[] options = {getString(R.string.scan_camera), getString(R.string.scan_gallery)};
+        new AlertDialog.Builder(this)
+            .setTitle(R.string.scan_board)
+            .setItems(options, (dialog, which) -> {
+                android.util.Log.i(TAG, "选择来源: " + (which == 0 ? "camera" : "gallery"));
+                if (which == 0) startCameraCapture();
+                else startGalleryPick();
+            })
+            .show();
+    }
+
+    /** 调起相机拍照（需先取得 CAMERA 权限）。 */
+    private void startCameraCapture() {
+        if (android.os.Build.VERSION.SDK_INT >= 23
+                && checkSelfPermission(android.Manifest.permission.CAMERA)
+                    != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            android.util.Log.w(TAG, "startCameraCapture: 缺 CAMERA 权限, 请求中");
+            requestPermissions(new String[]{android.Manifest.permission.CAMERA}, 1010);
+            return;
+        }
+        Intent intent = new Intent();
+        pendingCameraUri = com.gosgf.app.util.ImageSourcePicker
+                .createCameraIntent(this, intent, "board_" + System.currentTimeMillis());
+        android.util.Log.i(TAG, "startCameraCapture: launch uri=" + pendingCameraUri);
+        cameraLauncher.launch(intent);
+    }
+
+    /** 调起相册选图（Android 13+ 用 READ_MEDIA_IMAGES；以下用 READ_EXTERNAL_STORAGE）。 */
+    private void startGalleryPick() {
+        String perm;
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            perm = android.Manifest.permission.READ_MEDIA_IMAGES;
+        } else {
+            perm = android.Manifest.permission.READ_EXTERNAL_STORAGE;
+        }
+        if (android.os.Build.VERSION.SDK_INT >= 23
+                && checkSelfPermission(perm)
+                    != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            android.util.Log.w(TAG, "startGalleryPick: 缺 " + perm + ", 请求中");
+            requestPermissions(new String[]{perm}, 1011);
+            return;
+        }
+        Intent intent = new Intent();
+        com.gosgf.app.util.ImageSourcePicker.createGalleryIntent(intent);
+        android.util.Log.i(TAG, "startGalleryPick: launch");
+        galleryLauncher.launch(Intent.createChooser(intent, getString(R.string.scan_gallery)));
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (grantResults.length == 0 || grantResults[0]
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) return;
+        if (requestCode == 1010) startCameraCapture();
+        else if (requestCode == 1011) startGalleryPick();
+    }
+
+    /** 用户选定图片 Uri 后,先启动自定义裁剪界面(用户圈定棋盘方位),再识别。 */
+    private void startCropActivity(android.net.Uri uri) {
+        Log.i(TAG, "startCropActivity: uri=" + uri);
+        Intent intent = new Intent(this, CropActivity.class);
+        intent.putExtra(CropActivity.EXTRA_IMAGE_URI, uri);
+        cropActivityLauncher.launch(intent);
+    }
+
+    /** 裁剪完成后调起识别流程：确保模型已加载 → 读取图片 → 后台推理 → 应用结果。 */
+    private void runRecognition(android.net.Uri uri) {
+        Log.i(TAG, "runRecognition: uri=" + uri);
+        ensureMokuLoaded(() -> {
+            Log.i(TAG, "ensureMokuLoaded 回调, 启动识别线程");
+            // 主线程回弹窗，避免后台线程直接改 UI
+            runOnUiThread(() -> {
+                if (mokuProgressDialog != null) mokuProgressDialog.dismiss();
+                mokuProgressDialog = new AlertDialog.Builder(this)
+                        .setTitle(R.string.scan_board)
+                        .setMessage(R.string.scan_recognizing)
+                        .setCancelable(false)
+                        .show();
+            });
+            new Thread(() -> {
+                Exception err = null;
+                com.gosgf.app.util.MokuRecognizer.RecognitionResult result = null;
+                try {
+                    android.graphics.Bitmap bmp = loadBitmapFromUri(uri);
+                    Log.i(TAG, "loadBitmapFromUri → " + (bmp == null ? "null" :
+                            (bmp.getWidth() + "x" + bmp.getHeight())));
+                    if (bmp == null) throw new java.io.IOException("无法读取图片");
+                    // 传入图是用户手动裁剪的棋盘区域:跳过阶段2自动再裁剪(否则会把未被检测到的边角切掉)
+                    result = mokuRecognizer.recognize(bmp,
+                            com.gosgf.app.util.MokuRecognizer.DEFAULT_THRESHOLD, true);
+                } catch (Exception e) {
+                    err = e;
+                    Log.e(TAG, "识别异常: " + e.getClass().getSimpleName()
+                            + ": " + e.getMessage(), e);
+                }
+                final com.gosgf.app.util.MokuRecognizer.RecognitionResult r = result;
+                final Exception finalErr = err;
+                runOnUiThread(() -> {
+                    if (mokuProgressDialog != null) {
+                        mokuProgressDialog.dismiss();
+                        mokuProgressDialog = null;
+                    }
+                    if (finalErr != null) {
+                        Toast.makeText(this, getString(R.string.scan_failed, finalErr.getMessage()),
+                                Toast.LENGTH_LONG).show();
+                    } else {
+                        applyRecognitionResult(r);
+                    }
+                });
+            }).start();
+        });
+    }
+
+    /**
+     * 异步加载 moku-v3 模型：assets/moku.onnx。第一次使用时加载，之后复用。
+     * 加载完成后回调 onLoaded.run()。模型缺失会弹 Toast 提示。
+     *
+     * 关键:不再把 77MB 模型读到 Java 堆,而是先复制到 cacheDir,
+     * 用 OrtSession.createSession(path) 让 native 层 mmap,堆占用 ~0,
+     * 避免 OOM 崩溃(参见 readAssetBytes 旧实现引发的 OOM)。
+     */
+    private void ensureMokuLoaded(Runnable onLoaded) {
+        if (mokuRecognizer != null && mokuRecognizer.isReady()) {
+            onLoaded.run();
+            return;
+        }
+        if (mokuLoading) {
+            Toast.makeText(this, "模型加载中,请稍后", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        mokuLoading = true;
+        mokuProgressDialog = new AlertDialog.Builder(this)
+                .setTitle(R.string.scan_board)
+                .setMessage("首次识别需加载模型(~77MB)...")
+                .setCancelable(false)
+                .show();
+        mokuInitThread = new Thread(() -> {
+            String err = null;
+            try {
+                java.io.File modelFile = copyAssetToCache("moku.onnx", "moku.onnx");
+                com.gosgf.app.util.MokuRecognizer r =
+                        new com.gosgf.app.util.MokuRecognizer();
+                r.init(modelFile.getAbsolutePath());
+                mokuRecognizer = r;
+            } catch (Exception e) {
+                err = e.getClass().getSimpleName() + ": " + e.getMessage();
+            }
+            final String errMsg = err;
+            runOnUiThread(() -> {
+                mokuLoading = false;
+                if (mokuProgressDialog != null) {
+                    mokuProgressDialog.dismiss();
+                    mokuProgressDialog = null;
+                }
+                if (errMsg != null) {
+                    Toast.makeText(this,
+                            "模型加载失败: " + errMsg + "（请检查 assets/moku.onnx 是否存在）",
+                            Toast.LENGTH_LONG).show();
+                } else {
+                    onLoaded.run();
+                }
+            });
+        }, "moku-init");
+        mokuInitThread.start();
+    }
+
+    /**
+     * 把 assets 中的文件复制到 cacheDir 并返回目标文件。
+     * 已存在且大小匹配则跳过,避免每次启动都复制 77MB。
+     */
+    private java.io.File copyAssetToCache(String assetName, String destName)
+            throws java.io.IOException {
+        java.io.File outFile = new java.io.File(getCacheDir(), destName);
+        long assetLen = getAssets().openFd(assetName).getLength();
+        // 已存在且大小匹配 → 直接复用
+        if (outFile.exists() && outFile.length() == assetLen) {
+            android.util.Log.i("MainActivity",
+                    "Moku 模型缓存复用: " + outFile + " (" + assetLen + "B)");
+            return outFile;
+        }
+        android.util.Log.i("MainActivity",
+                "复制 Moku 模型 assets→cache: " + assetLen + "B");
+        try (java.io.InputStream in = getAssets().open(assetName);
+             java.io.OutputStream out = new java.io.FileOutputStream(outFile)) {
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+        }
+        return outFile;
+    }
+
+    /**
+     * 从 Uri 读取图片为 Bitmap,限制最大边长防止 OOM。
+     * 关键:用两次流式解码(只读尺寸 → 真 decodeStream),避免把原图
+     * 整个读进 byte[] 造成大图 OOM。
+     */
+    private android.graphics.Bitmap loadBitmapFromUri(android.net.Uri uri) {
+        // 第一遍:只取尺寸,不解码像素
+        android.graphics.BitmapFactory.Options opts =
+                new android.graphics.BitmapFactory.Options();
+        opts.inJustDecodeBounds = true;
+        try (java.io.InputStream in1 = getContentResolver().openInputStream(uri)) {
+            if (in1 == null) return null;
+            android.graphics.BitmapFactory.decodeStream(in1, null, opts);
+        } catch (Exception e) {
+            android.util.Log.w("MainActivity", "decode bounds 失败: " + e.getMessage());
+            return null;
+        }
+        int maxEdge = 1600; // 识别精度足够,且避免 OOM
+        int sample = 1;
+        while (opts.outWidth / sample > maxEdge || opts.outHeight / sample > maxEdge) {
+            sample *= 2;
+        }
+        // 第二遍:真解码,带 inSampleSize + inPreferredConfig RGB_565 省内存
+        android.graphics.BitmapFactory.Options dec =
+                new android.graphics.BitmapFactory.Options();
+        dec.inSampleSize = sample;
+        dec.inPreferredConfig = android.graphics.Bitmap.Config.RGB_565;
+        try (java.io.InputStream in2 = getContentResolver().openInputStream(uri)) {
+            if (in2 == null) return null;
+            return android.graphics.BitmapFactory.decodeStream(in2, null, dec);
+        } catch (Exception e) {
+            android.util.Log.w("MainActivity", "decode 失败: " + e.getMessage());
+            return null;
+        }
+    }
+
+    // 旧的 readAll/readAssetBytes 已被流式实现替代,删除避免误用。
+
+    /**
+     * 把识别的 19×19 棋盘矩阵应用到棋盘：复用摆子完成路径。
+     * - newGame + clearHandicapStones 重置
+     * - 遍历矩阵,黑棋 → addBlackHandicapStone,白棋 → addWhiteHandicapStone
+     * - applyHandicapStones 应用,提死子,setHandicap(0),默认黑方先手
+     * <p>
+     * 仅支持 19 路棋盘。识别前已由用户手动裁剪（拍照/相册后先裁剪），
+     * 故识别后直接应用并进入摆子模式核对,不再弹确认框。
+     */
+    private void applyRecognitionResult(
+            com.gosgf.app.util.MokuRecognizer.RecognitionResult r) {
+        if (r == null || r.board == null) {
+            Toast.makeText(this, R.string.scan_no_stones, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (r.board.length != 19) {
+            // 模型当前仅输出 19 路；若将来扩展到其他路数需在此处理
+            Toast.makeText(this, R.string.scan_only_19, Toast.LENGTH_LONG).show();
+            return;
+        }
+        // 直接写入棋盘（用户已在识别前手动裁剪,无需再确认）
+        applyRecognitionToBoard(r);
+    }
+
+    /** 实际把识别矩阵写入棋盘（后台线程执行）。 */
+    private void applyRecognitionToBoard(
+            com.gosgf.app.util.MokuRecognizer.RecognitionResult r) {
+        Toast.makeText(this, r.message, Toast.LENGTH_LONG).show();
+        new Thread(() -> {
+            board.newGame();
+            board.clearHandicapStones();
+            for (int row = 0; row < r.board.length; row++) {
+                for (int col = 0; col < r.board[row].length; col++) {
+                    int v = r.board[row][col];
+                    if (v == com.gosgf.app.util.MokuRecognizer.BLACK) {
+                        board.addBlackHandicapStone(col, row);
+                    } else if (v == com.gosgf.app.util.MokuRecognizer.WHITE) {
+                        board.addWhiteHandicapStone(col, row);
+                    }
+                }
+            }
+            board.applyHandicapStones();
+            int deadCount = board.cleanupDeadStonesAfterSetup();
+            board.setHandicap(0);
+            // 统计黑白数量(用于提示)
+            int blackCount = board.getBlackHandicapStones().size();
+            int whiteCount = board.getWhiteHandicapStones().size();
+            int total = blackCount + whiteCount;
+            String deadInfo = deadCount > 0 ? "，已自动提" + deadCount + "死子" : "";
+            String summaryMsg = "识别完成: 黑" + blackCount + " 白" + whiteCount
+                    + " 共" + total + "子" + deadInfo + ",进入摆子模式可调整";
+            // 识别完成后进入摆子模式,让用户在摆子模式中修正识别偏差,
+            // 用户调整完成后点击"完成"按钮,会触发原 onPlace 完成路径弹出"选择下一步"对话框
+            new Handler(Looper.getMainLooper()).post(() -> {
+                boardView.refresh();
+                updateCommentDisplay();
+                Toast.makeText(this, summaryMsg, Toast.LENGTH_LONG).show();
+                onPlace();
+            });
+        }).start();
+    }
+
+    // ==================== 拍照识别 end ====================
+
 
     private void onLoadGame() {
         // 请求文件访问权限
@@ -1470,6 +1861,19 @@ import java.util.Locale;
         estimateToken = -1;
         lastEstimateDialog = null;
         lastEstimateLeadView = null;
+        // 拍照识别：等待模型加载线程结束 + 释放 ONNX session
+        if (mokuInitThread != null) {
+            try { mokuInitThread.join(2000); } catch (InterruptedException ignored) {}
+            mokuInitThread = null;
+        }
+        if (mokuRecognizer != null) {
+            mokuRecognizer.close();
+            mokuRecognizer = null;
+        }
+        if (mokuProgressDialog != null) {
+            mokuProgressDialog.dismiss();
+            mokuProgressDialog = null;
+        }
     }
     
     /**

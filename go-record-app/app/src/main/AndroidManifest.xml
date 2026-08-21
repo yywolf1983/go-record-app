@@ -4,6 +4,10 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" android:minSdkVersion="30" />
+    <!-- 拍照识别：Android 13+ 用细粒度权限；Android 12 及以下走 READ_EXTERNAL_STORAGE -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <application
         android:allowBackup="true"
@@ -21,6 +25,22 @@
         </activity>
         <activity android:name=".GameInfoActivity"
             android:exported="false" />
+
+        <!-- 拍照识别：识别前自定义裁剪界面（用户圈定棋盘方位） -->
+        <activity android:name=".CropActivity"
+            android:exported="false"
+            android:theme="@style/Theme.GoRecordApp" />
+
+        <!-- 拍照识别：相机拍照输出到 cacheDir/capture_images/ 时的 FileProvider -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
     </application>
 

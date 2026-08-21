@@ -42,9 +42,9 @@ android {
         }
     }
 
-    // 模型权重(.bin.gz)已压缩，禁止 aapt 二次压缩（避免压缩大文件异常导致文件未进 APK）
+    // 模型权重(.bin.gz/.onnx)已压缩，禁止 aapt 二次压缩（避免压缩大文件异常导致文件未进 APK）
     aaptOptions {
-        noCompress "gz", "bin.gz", "cfg"
+        noCompress "gz", "bin.gz", "cfg", "onnx"
     }
 
     externalNativeBuild {
@@ -91,6 +91,10 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'com.google.android.material:material:1.11.0'
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    // 拍照识别：Moku RT-DETR 模型推理 (kaya-go/moku-v3 ONNX)
+    implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.17.0'
+    // 相机拍照 URI 访问
+    implementation 'androidx.core:core:1.12.0'
     testImplementation 'junit:junit:4.13.2'
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'

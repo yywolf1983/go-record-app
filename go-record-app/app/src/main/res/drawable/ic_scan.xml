@@ -1,0 +1,16 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="@color/icon_color">
+    <!-- 棋盘网格 + 扫描框角 -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M4 4h16v16H4z M6 6h12v12H6z M9 6v12 M15 6v12 M6 9h12 M6 15h12 M6 12h12 M9 6v12 M12 6v12"/>
+    <path
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2"
+        android:fillColor="#00000000"
+        android:pathData="M3 3 L3 6 M3 3 L6 3 M21 3 L18 3 M21 3 L21 6 M3 21 L3 18 M3 21 L6 21 M21 21 L21 18 M21 21 L18 21"/>
+</vector>
