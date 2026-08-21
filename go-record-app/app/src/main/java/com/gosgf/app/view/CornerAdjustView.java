@@ -21,13 +21,15 @@ import android.view.View;
 public class CornerAdjustView extends View {
     private static final float HANDLE_RADIUS = 28f;
     private static final float TOUCH_TOLERANCE = 60f;
+    /** 手柄往内(四边形中心方向)偏移的距离, 避免手指挡住棋盘边线 */
+    private static final float HANDLE_OFFSET = 96f;
 
     private Bitmap bitmap;
     private final Matrix displayMatrix = new Matrix();
     private final Matrix invertMatrix = new Matrix();
     private int viewW, viewH;
 
-    /** 四角(屏幕坐标): TL, TR, BR, BL */
+    /** 四角(屏幕坐标): TL, TR, BR, BL — 实际角点位置, 边框/遮罩/H均以此为准 */
     private final PointF[] handles = new PointF[4];
     private int draggingHandle = -1; // 0~3=角, -1=无, -2=整体拖拽
     private float lastTouchX, lastTouchY;
@@ -37,6 +39,8 @@ public class CornerAdjustView extends View {
     private final Paint borderPaint = new Paint();
     private final Paint handlePaint = new Paint();
     private final Paint labelPaint = new Paint();
+    private final Paint linkPaint = new Paint();
+    private final Paint dotPaint = new Paint();
 
     public CornerAdjustView(Context context) {
         this(context, null);
@@ -69,7 +73,38 @@ public class CornerAdjustView extends View {
         labelPaint.setAntiAlias(true);
         labelPaint.setTextAlign(Paint.Align.CENTER);
 
+        // 手柄与实际角点的连接线(虚线)
+        linkPaint.setColor(Color.parseColor("#4CAF50"));
+        linkPaint.setStyle(Paint.Style.STROKE);
+        linkPaint.setStrokeWidth(2f);
+        linkPaint.setAntiAlias(true);
+        linkPaint.setPathEffect(new android.graphics.DashPathEffect(new float[]{10f, 6f}, 0));
+
+        // 实际角点标记(小十字)
+        dotPaint.setColor(Color.parseColor("#FF5722"));
+        dotPaint.setStyle(Paint.Style.FILL);
+        dotPaint.setAntiAlias(true);
+
         for (int i = 0; i < 4; i++) handles[i] = new PointF(0, 0);
+    }
+
+    /** 计算四边形中心 */
+    private float[] getCenter() {
+        float cx = 0, cy = 0;
+        for (PointF p : handles) { cx += p.x; cy += p.y; }
+        return new float[]{cx / 4f, cy / 4f};
+    }
+
+    /** 手柄显示位置: 实际角点往中心方向偏移 HANDLE_OFFSET */
+    private float[] getHandlePos(int i) {
+        float[] c = getCenter();
+        float dx = c[0] - handles[i].x;
+        float dy = c[1] - handles[i].y;
+        float len = (float) Math.hypot(dx, dy);
+        if (len <= 0) return new float[]{handles[i].x, handles[i].y};
+        return new float[]{
+            handles[i].x + dx / len * HANDLE_OFFSET,
+            handles[i].y + dy / len * HANDLE_OFFSET};
     }
 
     public void setBitmap(Bitmap bmp) {
@@ -159,7 +194,7 @@ public class CornerAdjustView extends View {
         maskPath.op(inner, Path.Op.DIFFERENCE);
         canvas.drawPath(maskPath, maskPaint);
 
-        // 四边形边框
+        // 四边形边框(实际角点连线)
         canvas.drawLine(handles[0].x, handles[0].y, handles[1].x, handles[1].y, borderPaint);
         canvas.drawLine(handles[1].x, handles[1].y, handles[2].x, handles[2].y, borderPaint);
         canvas.drawLine(handles[2].x, handles[2].y, handles[3].x, handles[3].y, borderPaint);
@@ -172,11 +207,17 @@ public class CornerAdjustView extends View {
         canvas.drawLine(handles[0].x, handles[0].y, handles[2].x, handles[2].y, diag);
         canvas.drawLine(handles[1].x, handles[1].y, handles[3].x, handles[3].y, diag);
 
-        // 四角手柄 + 标签
+        // 每个角: 实际角点标记 + 虚线连接 + 偏移手柄
         String[] labels = {"TL", "TR", "BR", "BL"};
         for (int i = 0; i < 4; i++) {
-            canvas.drawCircle(handles[i].x, handles[i].y, HANDLE_RADIUS, handlePaint);
-            canvas.drawText(labels[i], handles[i].x, handles[i].y + 10f, labelPaint);
+            float[] hp = getHandlePos(i);
+            // 虚线连接(实际角点 → 手柄)
+            canvas.drawLine(handles[i].x, handles[i].y, hp[0], hp[1], linkPaint);
+            // 实际角点标记(橙色小圆点, 标明真实角点位置)
+            canvas.drawCircle(handles[i].x, handles[i].y, 8f, dotPaint);
+            // 偏移手柄(白色半透明大圆 + 标签)
+            canvas.drawCircle(hp[0], hp[1], HANDLE_RADIUS, handlePaint);
+            canvas.drawText(labels[i], hp[0], hp[1] + 10f, labelPaint);
         }
     }
 
@@ -209,8 +250,13 @@ public class CornerAdjustView extends View {
                 return true;
             case MotionEvent.ACTION_MOVE:
                 if (draggingHandle >= 0 && draggingHandle < 4) {
-                    handles[draggingHandle].set(
-                            clamp(x, 0, viewW), clamp(y, 0, viewH));
+                    // delta 方式: 手柄跟随手指移动, 实际角点同步偏移
+                    float dx = x - lastTouchX;
+                    float dy = y - lastTouchY;
+                    handles[draggingHandle].x = clamp(handles[draggingHandle].x + dx, 0, viewW);
+                    handles[draggingHandle].y = clamp(handles[draggingHandle].y + dy, 0, viewH);
+                    lastTouchX = x;
+                    lastTouchY = y;
                     invalidate();
                 } else if (draggingHandle == -2) {
                     float dx = x - lastTouchX;
@@ -253,8 +299,10 @@ public class CornerAdjustView extends View {
     }
 
     private int findHandle(float x, float y) {
+        // 用偏移后的手柄位置检测触摸
         for (int i = 0; i < 4; i++) {
-            if (Math.hypot(x - handles[i].x, y - handles[i].y) < TOUCH_TOLERANCE) {
+            float[] hp = getHandlePos(i);
+            if (Math.hypot(x - hp[0], y - hp[1]) < TOUCH_TOLERANCE) {
                 return i;
             }
         }
