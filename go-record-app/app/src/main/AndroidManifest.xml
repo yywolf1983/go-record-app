@@ -26,6 +26,11 @@
         <activity android:name=".GameInfoActivity"
             android:exported="false" />
 
+        <!-- 识别参数设置页:长按"摆子"按钮进入 -->
+        <activity android:name=".SettingsActivity"
+            android:exported="false"
+            android:theme="@style/Theme.GoRecordApp" />
+
         <!-- 拍照识别：识别前自定义裁剪界面（用户圈定棋盘方位） -->
         <activity android:name=".CropActivity"
             android:exported="false"

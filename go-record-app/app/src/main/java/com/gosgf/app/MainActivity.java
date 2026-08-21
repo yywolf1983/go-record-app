@@ -441,6 +441,12 @@ import java.util.Locale;
             if (isPlaceMode) onPlace();
             else showPlaceOrScanMenu();
         });
+        // 长按"摆子"按钮 → 打开"识别设置"页(调整识别参数,以设置项为准)
+        btnPlace.setOnLongClickListener(v -> {
+            startActivity(new android.content.Intent(this,
+                    com.gosgf.app.SettingsActivity.class));
+            return true;
+        });
         btnDeleteBranch.setOnClickListener(v -> onDeleteBranch());
         btnScore.setOnClickListener(v -> onScore());
         btnShowNumbers.setOnClickListener(v -> onShowNumbers());
@@ -1038,8 +1044,11 @@ import java.util.Locale;
                             (bmp.getWidth() + "x" + bmp.getHeight())));
                     if (bmp == null) throw new java.io.IOException("无法读取图片");
                     // 传入图是用户手动裁剪的棋盘区域:跳过阶段2自动再裁剪(否则会把未被检测到的边角切掉)
+                    // 识别参数按"识别设置"页读取(无写死配置)
+                    com.gosgf.app.util.RecognitionSettings rs =
+                            com.gosgf.app.util.RecognitionSettings.load(MainActivity.this);
                     result = mokuRecognizer.recognize(bmp,
-                            com.gosgf.app.util.MokuRecognizer.DEFAULT_THRESHOLD, true);
+                            com.gosgf.app.util.MokuRecognizer.DEFAULT_THRESHOLD, true, rs);
                 } catch (Exception e) {
                     err = e;
                     Log.e(TAG, "识别异常: " + e.getClass().getSimpleName()

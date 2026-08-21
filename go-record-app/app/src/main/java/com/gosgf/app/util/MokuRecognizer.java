@@ -47,7 +47,7 @@ public class MokuRecognizer {
     // 类别感知阈值:黑棋对比度通常更高,可用略高阈值过滤误检;
     // 白棋在木色棋盘上对比度较低,维持较低阈值保证召回
     private static final float BLACK_STONE_THRESHOLD_BIAS = +0.003f;
-    private static final float WHITE_STONE_THRESHOLD_BIAS = -0.000f;
+    private static final float WHITE_STONE_THRESHOLD_BIAS = -0.020f;
     private static final float CORNER_MIN_THRESHOLD = 0.005f;
     // WBF (Weighted Boxes Fusion) 参数:替代 NMS,对 TTA 多通道检测框加权平均
     private static final float WBF_IOU_THRESHOLD = 0.55f;
@@ -60,6 +60,9 @@ public class MokuRecognizer {
 
     private final OrtEnvironment env;
     private OrtSession session;
+
+    // 当前识别使用的可调设置(从设置页读取,避免写死常量)
+    private RecognitionSettings settings = new RecognitionSettings();
 
     /** 识别结果：19×19 棋盘矩阵 + 调试信息。 */
     public static class RecognitionResult {
@@ -119,11 +122,16 @@ public class MokuRecognizer {
      * @return 19×19 棋盘矩阵结果
      */
     public RecognitionResult recognize(Bitmap bitmap) throws Exception {
-        return recognize(bitmap, DEFAULT_THRESHOLD);
+        return recognize(bitmap, DEFAULT_THRESHOLD, new RecognitionSettings());
     }
 
     public RecognitionResult recognize(Bitmap bitmap, float threshold) throws Exception {
-        return recognize(bitmap, threshold, false);
+        return recognize(bitmap, threshold, new RecognitionSettings());
+    }
+
+    /** 使用自定义识别设置(来自设置页)进行识别。 */
+    public RecognitionResult recognize(Bitmap bitmap, RecognitionSettings rs) throws Exception {
+        return recognize(bitmap, DEFAULT_THRESHOLD, rs);
     }
 
     /**
@@ -135,7 +143,19 @@ public class MokuRecognizer {
      */
     public RecognitionResult recognize(Bitmap bitmap, float threshold,
                                         boolean alreadyCropped) throws Exception {
+        return recognize(bitmap, threshold, alreadyCropped, new RecognitionSettings());
+    }
+
+    public RecognitionResult recognize(Bitmap bitmap, float threshold,
+                                        RecognitionSettings rs) throws Exception {
+        return recognize(bitmap, threshold, false, rs);
+    }
+
+    public RecognitionResult recognize(Bitmap bitmap, float threshold,
+                                        boolean alreadyCropped,
+                                        RecognitionSettings rs) throws Exception {
         if (session == null) throw new IllegalStateException("MokuRecognizer 未初始化");
+        this.settings = (rs != null) ? rs : new RecognitionSettings();
         final Bitmap rawBitmap = bitmap; // 保存原始图,供低阈值重试时使用
 
         int srcW = bitmap.getWidth();
@@ -178,16 +198,16 @@ public class MokuRecognizer {
         if (alreadyCropped) {
             Log.i(TAG, "手动裁剪图:跳过阶段2自动再裁剪, 直接整图 TTA 识别(保边角)");
             RecognitionResult rr = postprocessWithTTA(out1, bitmap, pp1, srcW, srcH, threshold,
-                    true);
-            return maybeRetry(rawBitmap, rr, threshold);
+                    true, rs);
+            return maybeRetry(rawBitmap, rr, threshold, rs);
         }
 
         // 棋子 bbox 覆盖范围足够小 (棋盘只占图像一部分) → 自动裁剪 + 重新推理
         // 否则直接用阶段 1 结果做完整后处理
         if (bbox == null) {
             Log.i(TAG, "阶段 1 未检测到棋子, 直接后处理+TTA");
-            RecognitionResult r1 = postprocessWithTTA(out1, bitmap, pp1, srcW, srcH, threshold);
-            return maybeRetry(rawBitmap, r1, threshold);
+            RecognitionResult r1 = postprocessWithTTA(out1, bitmap, pp1, srcW, srcH, threshold, rs);
+            return maybeRetry(rawBitmap, r1, threshold, rs);
         }
 
         float minX = bbox[0], minY = bbox[1], maxX = bbox[2], maxY = bbox[3];
@@ -216,7 +236,7 @@ public class MokuRecognizer {
         if (cropW <= 0 || cropH <= 0 || cropW * cropH < (srcW * srcH) / 100) {
             Log.w(TAG, "棋盘 bbox 退化(裁剪尺寸 " + cropW + "x" + cropH
                     + "), 回退整图识别");
-            return postprocessWithTTA(out1, bitmap, pp1, srcW, srcH, threshold);
+            return postprocessWithTTA(out1, bitmap, pp1, srcW, srcH, threshold, rs);
         }
 
         Log.i(TAG, "自动裁剪: pad=" + pad + " → 区域(" + cropX + "," + cropY + ")-("
@@ -232,9 +252,9 @@ public class MokuRecognizer {
                 + String.format(", letterbox: scale=%.3f pad=(%d,%d)",
                         pp2.lb.scale, pp2.lb.padX, pp2.lb.padY));
 
-        RecognitionResult result = postprocessWithTTA(out2, cropped, pp2, cropW, cropH, threshold);
+        RecognitionResult result = postprocessWithTTA(out2, cropped, pp2, cropW, cropH, threshold, rs);
         Log.i(TAG, "两阶段识别完成 (自动裁剪 " + cropW + "x" + cropH + " + TTA)");
-        return maybeRetry(rawBitmap, result, threshold);
+        return maybeRetry(rawBitmap, result, threshold, rs);
     }
 
     /**
@@ -242,14 +262,15 @@ public class MokuRecognizer {
      * 用较低阈值(保召回)对原始图重新识别一次。低阈值结果不再重试,避免死循环。
      */
     private RecognitionResult maybeRetry(Bitmap rawBitmap,
-                                         RecognitionResult result, float threshold) {
+                                         RecognitionResult result, float threshold,
+                                         RecognitionSettings rs) {
         if (threshold > LOW_RETRY_THRESHOLD
                 && result != null
                 && result.blackCount + result.whiteCount == 0) {
             Log.w(TAG, "高阈值(" + threshold + ")未识别到任何棋子, 用低阈值("
                     + LOW_RETRY_THRESHOLD + ")重试");
             try {
-                return recognize(rawBitmap, LOW_RETRY_THRESHOLD);
+                return recognize(rawBitmap, LOW_RETRY_THRESHOLD, rs);
             } catch (Exception e) {
                 Log.e(TAG, "低阈值重试失败, 返回原空结果", e);
             }
@@ -304,14 +325,16 @@ public class MokuRecognizer {
      */
     private RecognitionResult postprocessWithTTA(float[][] out, Bitmap bmp,
                                                   PreprocessResult pp, int imgW, int imgH,
-                                                  float threshold) throws Exception {
-        return postprocessWithTTA(out, bmp, pp, imgW, imgH, threshold, false);
+                                                  float threshold,
+                                                  RecognitionSettings rs) throws Exception {
+        return postprocessWithTTA(out, bmp, pp, imgW, imgH, threshold, false, rs);
     }
 
     private RecognitionResult postprocessWithTTA(float[][] out, Bitmap bmp,
                                                   PreprocessResult pp, int imgW, int imgH,
                                                   float threshold,
-                                                  boolean uniformGrid) throws Exception {
+                                                  boolean uniformGrid,
+                                                  RecognitionSettings rs) throws Exception {
         long tStart = System.currentTimeMillis();
         int nLogit = NUM_QUERIES * NUM_CLASSES;
         int nBox = NUM_QUERIES * 4;
@@ -371,7 +394,7 @@ public class MokuRecognizer {
         Log.i(TAG, "4 路 TTA 完成: 4×" + NUM_QUERIES + " = " + (NUM_QUERIES * NUM_VARIANTS)
                 + " query 合并, 总耗时" + (System.currentTimeMillis() - tStart) + "ms");
         return postprocess(combinedLogits, combinedBoxes, imgW, imgH, threshold, bmp, pp.lb,
-                NUM_QUERIES * NUM_VARIANTS, uniformGrid);
+                NUM_QUERIES * NUM_VARIANTS, uniformGrid, rs);
     }
 
     /**
@@ -553,6 +576,24 @@ public class MokuRecognizer {
      * 避免直接拉伸导致长宽比扭曲 (如 720x1600 直接 resize 到 640x640 会严重压扁)。
      */
     private static PreprocessResult preprocess(Bitmap bmp, int srcW, int srcH) {
+        return preprocess(bmp, srcW, srcH, 1.0f);
+    }
+
+    /**
+     * @param scaleBoost 缩放增强系数 (TTA 用)。1.0=原样; <1 在原图基础上再缩小 (棋盘占图比例变化,
+     *                  有助于模型在不同尺度下召回弱对比子); 内部对原图做 center-crop 后再 letterbox。
+     */
+    private static PreprocessResult preprocess(Bitmap bmp, int srcW, int srcH, float scaleBoost) {
+        if (scaleBoost != 1.0f) {
+            // center-crop 到 scaleBoost 比例 (如 0.9 → 裁掉周边 5%), 等效于"放大棋盘"
+            int cw = Math.max(1, Math.round(srcW * scaleBoost));
+            int ch = Math.max(1, Math.round(srcH * scaleBoost));
+            int ox = (srcW - cw) / 2;
+            int oy = (srcH - ch) / 2;
+            bmp = Bitmap.createBitmap(bmp, ox, oy, cw, ch);
+            srcW = cw;
+            srcH = ch;
+        }
         float scale = Math.min((float) INPUT_SIZE / srcW, (float) INPUT_SIZE / srcH);
         int newW = Math.max(1, Math.round(srcW * scale));
         int newH = Math.max(1, Math.round(srcH * scale));
@@ -608,23 +649,27 @@ public class MokuRecognizer {
     private static RecognitionResult postprocess(float[] logits, float[] predBoxes,
                                                   int imgW, int imgH, float threshold,
                                                   android.graphics.Bitmap srcBmp,
-                                                  LetterboxInfo lb) {
-        return postprocess(logits, predBoxes, imgW, imgH, threshold, srcBmp, lb, NUM_QUERIES);
-    }
-
-    private static RecognitionResult postprocess(float[] logits, float[] predBoxes,
-                                                  int imgW, int imgH, float threshold,
-                                                  android.graphics.Bitmap srcBmp,
-                                                  LetterboxInfo lb, int numQueries) {
+                                                  LetterboxInfo lb,
+                                                  RecognitionSettings rs) {
         return postprocess(logits, predBoxes, imgW, imgH, threshold, srcBmp, lb,
-                numQueries, false);
+                NUM_QUERIES, rs);
     }
 
     private static RecognitionResult postprocess(float[] logits, float[] predBoxes,
                                                   int imgW, int imgH, float threshold,
                                                   android.graphics.Bitmap srcBmp,
                                                   LetterboxInfo lb, int numQueries,
-                                                  boolean uniformGrid) {
+                                                  RecognitionSettings rs) {
+        return postprocess(logits, predBoxes, imgW, imgH, threshold, srcBmp, lb,
+                numQueries, false, rs);
+    }
+
+    private static RecognitionResult postprocess(float[] logits, float[] predBoxes,
+                                                  int imgW, int imgH, float threshold,
+                                                  android.graphics.Bitmap srcBmp,
+                                                  LetterboxInfo lb, int numQueries,
+                                                  boolean uniformGrid,
+                                                  RecognitionSettings rs) {
         List<Detection> stones = new ArrayList<>();
         List<Detection> cornerCandidates = new ArrayList<>();
         // 临界棋子:score 在 [threshold*0.5, threshold) 之间,差一点就过阈值
@@ -761,15 +806,17 @@ public class MokuRecognizer {
         // 19×19 网格整体错乱)。用户已手动裁剪出"近似矩形的 19 路棋盘",直接假设为均匀网格:
         // 用检测到的棋子 bbox 外扩锚定 19 路交叉点,然后在每个交叉点位置识别有没有子/什么颜色。
         if (uniformGrid) {
-            float[][] corners = computeStonesBBoxCorners(stones, imgW, imgH);
+            float[][] corners = fitUniformGridCorners(stones, imgW, imgH);
             Log.i(TAG, "均匀网格模式(手动裁剪):跳过角点检测, 用棋子bbox外扩锚定19路网格 "
                     + String.format("TL(%.0f,%.0f) TR(%.0f,%.0f) BR(%.0f,%.0f) BL(%.0f,%.0f)",
                         corners[0][0], corners[0][1], corners[1][0], corners[1][1],
                         corners[2][0], corners[2][1], corners[3][0], corners[3][1]));
-            verifyStonesColor(stones, srcBmp);
-            mapStonesToGrid(stones, corners, out.board);
-            int recovered = recoverMissedStones(srcBmp, corners, out.board);
+            verifyStonesColor(stones, srcBmp, rs);
+            mapStonesToGrid(stones, corners, out.board, imgW, imgH, rs); // uniformGrid 已是 fit,无需再降级
+            int recovered =             recoverMissedStones(srcBmp, corners, out.board, rs);
             if (recovered > 0) Log.i(TAG, "漏检恢复(均匀网格): 补回 " + recovered + " 个棋子");
+            int reviewU = fullBoardReview(srcBmp, corners, out.board, rs);
+            if (reviewU > 0) Log.i(TAG, "全棋盘复核(均匀网格): 改动 " + reviewU + " 格");
             out.cornersDetected = true;
             out.blackCount = countColor(out.board, BLACK);
             out.whiteCount = countColor(out.board, WHITE);
@@ -782,11 +829,19 @@ public class MokuRecognizer {
             float[][] corners = insetImageCorners(imgW, imgH, 0.05f);
             Log.w(TAG, "角点不足 2 个, 使用图像内缩 fallback: "
                     + corners[0][0] + "," + corners[0][1] + " ...");
-            verifyStonesColor(stones, srcBmp);
-            mapStonesToGrid(stones, corners, out.board);
+            verifyStonesColor(stones, srcBmp, rs);
+            boolean badGeo = mapStonesToGrid(stones, corners, out.board, imgW, imgH, rs);
+            if (badGeo && stones.size() >= 4) {
+                Log.w(TAG, "→ 角不足路径几何异常, 降级棋子 bbox 拟合网格重映射");
+                corners = fitUniformGridCorners(stones, imgW, imgH);
+                out.board = new int[BOARD_SIZE][BOARD_SIZE];
+                mapStonesToGrid(stones, corners, out.board, imgW, imgH, rs);
+            }
             // 模型漏检恢复: 反投影每个空网格交点回图像,采样像素确认
-            int recovered = recoverMissedStones(srcBmp, corners, out.board);
+            int recovered = recoverMissedStones(srcBmp, corners, out.board, rs);
             if (recovered > 0) Log.i(TAG, "漏检恢复(角不足路径): 补回 " + recovered + " 个棋子");
+            int reviewF = fullBoardReview(srcBmp, corners, out.board, rs);
+            if (reviewF > 0) Log.i(TAG, "全棋盘复核(角不足路径): 改动 " + reviewF + " 格");
             out.cornersDetected = false;
             out.blackCount = countColor(out.board, BLACK);
             out.whiteCount = countColor(out.board, WHITE);
@@ -817,21 +872,21 @@ public class MokuRecognizer {
         Log.d(TAG, String.format("4 角覆盖范围: bbox 占图像 %.1f%% (阈值 30%%)", covRatio * 100));
 
         // 4 角使用策略(模型检测到的真实 4 角优先,保证边角精度;仅在不可信时回退):
-        // 1. 覆盖范围 ≥ 70%:模型检测的 4 角充分可信 → 直接用模型 4 角
-        //    (高覆盖本就说明 4 角正确,用图像内缩反而会引入平移/缩放,使边角棋子错位)
-        // 2. 退化(覆盖范围 < 2%):4 角检测失败 → 用棋子 bbox 外扩
-        // 3. 覆盖范围 < 30%:模型把棋盘内部点当 corner → 用棋子 bbox 外扩
-        if (covRatio >= 0.70f) {
-            Log.d(TAG, String.format("4 角覆盖范围充足(%.1f%% ≥ 70%%), 使用模型检测的真实 4 角",
+        // 1. 覆盖充足(≥70%) 且 非退化(无重合/非共线/近似矩形):用模型 4 角
+        // 2. 退化 或 覆盖不足(<30%) 或 覆盖足但退化:降级用棋子 bbox 拟合(数据驱动网格)
+        boolean degenerate = areCornersDegenerate(corners, imgW, imgH);
+        if (covRatio >= 0.70f && !degenerate) {
+            Log.d(TAG, String.format("4 角可信(覆盖%.1f%% 且非退化), 使用模型检测的真实 4 角",
                     covRatio * 100));
-            // 保留 orderCorners(top4) 的结果,不再用图像内缩覆盖
-        } else if (areCornersDegenerate(corners, imgW, imgH)) {
-            Log.w(TAG, "4 角退化(聚集在一处), 使用棋子 bbox 外扩 fallback");
-            corners = computeStonesBBoxCorners(stones, imgW, imgH);
+            // 保留 orderCorners(top4) 的结果
         } else {
-            Log.w(TAG, String.format("4 角覆盖范围过小(%.1f%% < 30%%), 使用棋子 bbox 外扩 fallback",
-                    covRatio * 100));
-            corners = computeStonesBBoxCorners(stones, imgW, imgH);
+            if (degenerate) {
+                Log.w(TAG, "4 角退化(重合/共线/非矩形), 降级为棋子 bbox 拟合网格(H不再算,保住已检棋子)");
+            } else {
+                Log.w(TAG, String.format("4 角覆盖范围过小(%.1f%% < 30%%), 降级为棋子 bbox 拟合网格",
+                        covRatio * 100));
+            }
+            corners = fitUniformGridCorners(stones, imgW, imgH);
         }
         Log.d(TAG, "最终使用 4 角: "
                 + String.format("TL(%.0f,%.0f) TR(%.0f,%.0f) BR(%.0f,%.0f) BL(%.0f,%.0f)",
@@ -840,16 +895,25 @@ public class MokuRecognizer {
 
         // 颜色二次验证:采样棋子中心区域像素,验证模型黑白判断
         // 修正明显的颜色错误(模型把黑当白或反之)
-        verifyStonesColor(stones, srcBmp);
+        verifyStonesColor(stones, srcBmp, rs);
 
         // 棋子映射到 19×19 网格
-        mapStonesToGrid(stones, corners, out.board);
+        boolean badGeo = mapStonesToGrid(stones, corners, out.board, imgW, imgH, rs);
+        // 几何异常(过多棋子偏差过大/冲突,说明角点/H 不准):降级到棋子 bbox 拟合网格重映射
+        if (badGeo && stones.size() >= 4) {
+            Log.w(TAG, "→ 主路径几何异常, 降级用棋子 bbox 拟合网格重映射(避免角点不准导致整盘错)");
+            corners = fitUniformGridCorners(stones, imgW, imgH);
+            out.board = new int[BOARD_SIZE][BOARD_SIZE];
+            mapStonesToGrid(stones, corners, out.board, imgW, imgH, rs);
+        }
 
         // 模型漏检恢复: 反投影每个空网格交点回图像,采样像素确认
-        int recovered = recoverMissedStones(srcBmp, corners, out.board);
+        int recovered = recoverMissedStones(srcBmp, corners, out.board, rs);
         if (recovered > 0) {
             Log.i(TAG, "漏检恢复(主路径): 补回 " + recovered + " 个棋子");
         }
+        int reviewM = fullBoardReview(srcBmp, corners, out.board, rs);
+        if (reviewM > 0) Log.i(TAG, "全棋盘复核(主路径): 改动 " + reviewM + " 格");
 
         out.cornersDetected = true;
         out.blackCount = countColor(out.board, BLACK);
@@ -968,9 +1032,51 @@ public class MokuRecognizer {
         return new float[][]{ pts[tl], pts[tr], pts[br], pts[bl] };
     }
 
-    /** 4 角退化检查:bbox 面积小于图像面积 2% 视为退化。 */
+    /**
+     * 4 角退化检查:以下任一情况视为退化,应降级到棋子 bbox 兜底(而非用坏角点算 H):
+     *   1. bbox 面积 < 图像 2% (4 角挤成一团);
+     *   2. 任意两角过近 (< 短边 5%) —— 模型把同一点重复当角(BL=TL 这类);
+     *   3. 4 角近似共线 (四点构成多边形面积 ≈ 0) —— H 矩阵奇异;
+     *   4. 两组对边长度差异过大 (> 3 倍) —— 非近似矩形,角点选错。
+     */
     private static boolean areCornersDegenerate(float[][] corners, int w, int h) {
-        return computeCornerCoverageRatio(corners, w, h) < 0.02f;
+        if (computeCornerCoverageRatio(corners, w, h) < 0.02f) return true;
+        float shortSide = Math.min(w, h);
+        // 任意两角过近
+        for (int i = 0; i < 4; i++) {
+            for (int j = i + 1; j < 4; j++) {
+                float d = (float) Math.hypot(corners[i][0] - corners[j][0],
+                        corners[i][1] - corners[j][1]);
+                if (d < shortSide * 0.05f) return true;
+            }
+        }
+        // 4 角近似共线:用鞋带公式算四边形面积,过小即退化 (面积阈值 = 短边^2 的 1%)
+        float area = shoeLaceArea(corners);
+        if (area < shortSide * shortSide * 0.01f) return true;
+        // 对边长度差异过大
+        float[] edge = new float[4];
+        for (int i = 0; i < 4; i++) {
+            int j = (i + 1) % 4;
+            edge[i] = (float) Math.hypot(corners[i][0] - corners[j][0],
+                    corners[i][1] - corners[j][1]);
+        }
+        float diag1 = Math.max(edge[0], edge[2]); // 对边0-2
+        float diag2 = Math.max(edge[1], edge[3]); // 对边1-3
+        float minD = Math.min(edge[0], edge[2]);
+        float minD2 = Math.min(edge[1], edge[3]);
+        if (minD > 0 && diag1 / minD > 3f) return true;
+        if (minD2 > 0 && diag2 / minD2 > 3f) return true;
+        return false;
+    }
+
+    /** 鞋带公式计算 4 角多边形有向面积绝对值。 */
+    private static float shoeLaceArea(float[][] p) {
+        float s = 0;
+        for (int i = 0; i < 4; i++) {
+            int j = (i + 1) % 4;
+            s += p[i][0] * p[j][1] - p[j][0] * p[i][1];
+        }
+        return Math.abs(s) / 2f;
     }
 
     /** 4 角 bbox 面积 / 图像面积,用于检测 4 角是否覆盖了合理范围。 */
@@ -1036,6 +1142,198 @@ public class MokuRecognizer {
         };
     }
 
+    /**
+     * 数据驱动网格拟合(手动裁剪 / uniformGrid 模式用)。
+     * 比单纯 bbox 外扩更准:用所有检测到的棋子投票最近交叉点,最小二乘拟合最优仿射角点,
+     * 使网格贴合实际棋子布局(轻微透视/倾斜也能对齐),天然免疫"空角/边角无子"。
+     *
+     * 步骤:
+     *   1. 用 bbox 外扩得到初始 4 角,反投影出 19×19 初始交叉点坐标;
+     *   2. 每个检测子投票到最近交叉点 (c,r),累加坐标均值;
+     *   3. 缺失的行/列(无子)用相邻行列线性插值补全;
+     *   4. 以 (c/18, r/18) 为自变量、(meanX, meanY) 为因变量,最小二乘拟合仿射:
+     *        x = a + b*u + c0*v ,  y = d + e*u + f*v   (u=c/18, v=r/18)
+     *      解出 6 参数后重建 4 角(保持 applyHomography 接口不变)。
+     */
+    private static float[][] fitUniformGridCorners(List<Detection> stones, int imgW, int imgH) {
+        float[][] init = computeStonesBBoxCorners(stones, imgW, imgH);
+        if (stones.size() < 4) {
+            Log.d(TAG, "数据驱动拟合: 棋子<4, 退化为 bbox 外扩角点");
+            return init;
+        }
+        // 初始网格:由 init 角点反投影出 19×19 交叉点理论坐标
+        float[][] dst = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+        float[] H = Perspective.computeHomography(init, dst);
+        if (H == null) return init;
+        float[][] gx = new float[BOARD_SIZE][BOARD_SIZE]; // 初始交叉点 x
+        float[][] gy = new float[BOARD_SIZE][BOARD_SIZE];
+        for (int r = 0; r < BOARD_SIZE; r++) {
+            for (int c = 0; c < BOARD_SIZE; c++) {
+                float u = c / 18f, v = r / 18f;
+                float ix = init[0][0] + u * (init[1][0] - init[0][0]) + v * (init[3][0] - init[0][0]);
+                float iy = init[0][1] + u * (init[1][1] - init[0][1]) + v * (init[3][1] - init[0][1]);
+                gx[c][r] = ix;
+                gy[c][r] = iy;
+            }
+        }
+        // 投票:每格累加坐标、计数
+        double[] sumX = new double[BOARD_SIZE * BOARD_SIZE];
+        double[] sumY = new double[BOARD_SIZE * BOARD_SIZE];
+        int[] cnt = new int[BOARD_SIZE * BOARD_SIZE];
+        for (Detection d : stones) {
+            // 找最近初始交叉点
+            int bestC = 0, bestR = 0;
+            double bestD = Double.MAX_VALUE;
+            for (int r = 0; r < BOARD_SIZE; r++) {
+                for (int c = 0; c < BOARD_SIZE; c++) {
+                    double dx = d.cx - gx[c][r];
+                    double dy = d.cy - gy[c][r];
+                    double dist = dx * dx + dy * dy;
+                    if (dist < bestD) { bestD = dist; bestC = c; bestR = r; }
+                }
+            }
+            int idx = bestR * BOARD_SIZE + bestC;
+            sumX[idx] += d.cx;
+            sumY[idx] += d.cy;
+            cnt[idx]++;
+        }
+        // 列均值 / 行均值(仅统计有票的点)
+        double[] colX = new double[BOARD_SIZE];
+        int[] colN = new int[BOARD_SIZE];
+        double[] rowY = new double[BOARD_SIZE];
+        int[] rowN = new int[BOARD_SIZE];
+        for (int r = 0; r < BOARD_SIZE; r++) {
+            for (int c = 0; c < BOARD_SIZE; c++) {
+                int idx = r * BOARD_SIZE + c;
+                if (cnt[idx] > 0) {
+                    double mx = sumX[idx] / cnt[idx];
+                    double my = sumY[idx] / cnt[idx];
+                    colX[c] += mx; colN[c]++;
+                    rowY[r] += my; rowN[r]++;
+                }
+            }
+        }
+        for (int c = 0; c < BOARD_SIZE; c++) if (colN[c] > 0) colX[c] /= colN[c];
+        for (int r = 0; r < BOARD_SIZE; r++) if (rowN[r] > 0) rowY[r] /= rowN[r];
+        // 用真实棋子间距(相邻有子列/行的平均距离)作为外推步长,避免外框边距用错
+        double avgCellX = computeAvgStep(colX, colN);
+        double avgCellY = computeAvgStep(rowY, rowN);
+        if (avgCellX <= 0) avgCellX = 1.0;
+        if (avgCellY <= 0) avgCellY = 1.0;
+        // 缺失列/行补全:中间插值,两端用真实格距外推(空角/空边不再把外框拉偏)
+        interpolate(colX, colN, avgCellX);
+        interpolate(rowY, rowN, avgCellY);
+
+        // 最小二乘拟合仿射: x = a + b*u + c0*v ; y = d + e*u + f*v
+        // 正规方程 A^T A p = A^T b, A 每行 [1, u, v]
+        double[][] ATA_x = new double[3][3];
+        double[] ATb_x = new double[3];
+        double[][] ATA_y = new double[3][3];
+        double[] ATb_y = new double[3];
+        for (int r = 0; r < BOARD_SIZE; r++) {
+            for (int c = 0; c < BOARD_SIZE; c++) {
+                int idx = r * BOARD_SIZE + c;
+                if (cnt[idx] == 0) continue; // 仅用有票点拟合
+                double u = c / 18.0, v = r / 18.0;
+                double a = 1, b = u, cc = v;
+                ATA_x[0][0] += a*a; ATA_x[0][1] += a*b; ATA_x[0][2] += a*cc;
+                ATA_x[1][0] += b*a; ATA_x[1][1] += b*b; ATA_x[1][2] += b*cc;
+                ATA_x[2][0] += cc*a; ATA_x[2][1] += cc*b; ATA_x[2][2] += cc*cc;
+                ATb_x[0] += a * colX[c]; ATb_x[1] += b * colX[c]; ATb_x[2] += cc * colX[c];
+                ATA_y[0][0] += a*a; ATA_y[0][1] += a*b; ATA_y[0][2] += a*cc;
+                ATA_y[1][0] += b*a; ATA_y[1][1] += b*b; ATA_y[1][2] += b*cc;
+                ATA_y[2][0] += cc*a; ATA_y[2][1] += cc*b; ATA_y[2][2] += cc*cc;
+                ATb_y[0] += a * rowY[r]; ATb_y[1] += b * rowY[r]; ATb_y[2] += cc * rowY[r];
+            }
+        }
+        double[] px = solve3x3(ATA_x, ATb_x);
+        double[] py = solve3x3(ATA_y, ATb_y);
+        if (px == null || py == null) {
+            Log.w(TAG, "数据驱动拟合: 3x3 求解失败, 退化为 bbox 外扩角点");
+            return init;
+        }
+        // 重建 4 角 (u,v) ∈ {(0,0)TL,(1,0)TR,(0,1)BL,(1,1)BR}
+        float[][] corners = new float[4][2];
+        corners[0] = new float[]{(float)(px[0]), (float)(py[0])};                       // TL (0,0)
+        corners[1] = new float[]{(float)(px[0]+px[1]), (float)(py[0]+py[1])};           // TR (1,0)
+        corners[3] = new float[]{(float)(px[0]+px[2]), (float)(py[0]+py[2])};           // BL (0,1)
+        corners[2] = new float[]{(float)(px[0]+px[1]+px[2]), (float)(py[0]+py[1]+py[2])}; // BR (1,1)
+        Log.i(TAG, "数据驱动网格拟合: 用 " + stones.size() + " 子最小二乘校正角点(抗轻微透视/倾斜)");
+        return corners;
+    }
+
+    /**
+     * 对含缺失(count==0 表示无子)的行列坐标数组做补全。
+     * 中间缺失段:线性插值;
+     * 两端缺失(如空角/空边):用相邻有子点的真实格距外推(每向外 1 格 ±cell),
+     * 而不 clamp 到有子点(否则外框会被"拉到"最外有子点,导致整盘偏移/缩小)。
+     */
+    private static void interpolate(double[] vals, int[] cnt, double cell) {
+        int n = vals.length;
+        int first = -1, last = -1;
+        for (int i = 0; i < n; i++) { if (cnt[i] > 0) { if (first < 0) first = i; last = i; } }
+        if (first < 0) return;
+        // 左端外推:vals[0..first-1] = vals[first] - cell*(first - i)
+        for (int i = first - 1; i >= 0; i--) vals[i] = vals[i + 1] - cell;
+        // 右端外推:vals[last+1..n-1] = vals[last] + cell*(i - last)
+        for (int i = last + 1; i < n; i++) vals[i] = vals[i - 1] + cell;
+        // 中间缺失段线性插值
+        int i = 0;
+        while (i < n) {
+            if (cnt[i] == 0) {
+                int s = i;
+                while (i < n && cnt[i] == 0) i++;
+                int e = i; // e 是下一个有效点
+                if (s > 0 && e < n) {
+                    double v0 = vals[s - 1], v1 = vals[e];
+                    int span = e - (s - 1);
+                    for (int k = s; k < e; k++) {
+                        vals[k] = v0 + (v1 - v0) * (k - (s - 1)) / span;
+                    }
+                }
+            } else i++;
+        }
+    }
+
+    /** 计算相邻有子点的平均间距(真实格距),用于端点外推步长。无相邻有子点返回 0。 */
+    private static double computeAvgStep(double[] vals, int[] cnt) {
+        double sum = 0; int n = 0;
+        int prev = -1;
+        for (int i = 0; i < vals.length; i++) {
+            if (cnt[i] > 0) {
+                if (prev >= 0) { sum += Math.abs(vals[i] - vals[prev]); n++; }
+                prev = i;
+            }
+        }
+        return n > 0 ? sum / n : 0;
+    }
+
+    /** 解 3x3 线性方程组 (高斯消元), 返回 null 表示奇异。 */
+    private static double[] solve3x3(double[][] A, double[] b) {
+        double[][] M = new double[3][4];
+        for (int i = 0; i < 3; i++) {
+            System.arraycopy(A[i], 0, M[i], 0, 3);
+            M[i][3] = b[i];
+        }
+        for (int col = 0; col < 3; col++) {
+            int piv = col;
+            for (int r = col + 1; r < 3; r++) {
+                if (Math.abs(M[r][col]) > Math.abs(M[piv][col])) piv = r;
+            }
+            if (Math.abs(M[piv][col]) < 1e-9) return null;
+            double[] tmp = M[col]; M[col] = M[piv]; M[piv] = tmp;
+            double d = M[col][col];
+            for (int j = col; j < 4; j++) M[col][j] /= d;
+            for (int r = 0; r < 3; r++) {
+                if (r != col) {
+                    double f = M[r][col];
+                    for (int j = col; j < 4; j++) M[r][j] -= f * M[col][j];
+                }
+            }
+        }
+        return new double[]{M[0][3], M[1][3], M[2][3]};
+    }
+
     // ==================== 棋子映射到网格 ====================
 
     /**
@@ -1044,14 +1342,34 @@ public class MokuRecognizer {
      * 棋子 → (rx,ry) ∈ [0,1] → 网格 (col,row) = round(rx*18, round(ry*18))。
      * 多棋子落在同一格:按 score 降序,高分胜出。
      */
-    private static void mapStonesToGrid(List<Detection> stones, float[][] corners, int[][] board) {
+    private static boolean mapStonesToGrid(List<Detection> stones, float[][] corners, int[][] board,
+                                         RecognitionSettings rs) {
+        // 兼容性签名:无图像尺寸时无法降级重试,直接走原逻辑
+        return mapStonesToGrid(stones, corners, board, -1, -1, rs);
+    }
+
+    /**
+     * @return true 表示几何疑似异常(过多棋子偏差过大/冲突,可能角点不准),建议调用方降级到
+     *             棋子 bbox 拟合网格重试;false 表示映射质量正常。
+     */
+    private static boolean mapStonesToGrid(List<Detection> stones, float[][] corners, int[][] board,
+                                         int imgW, int imgH,
+                                         RecognitionSettings rs) {
         float[][] dst = {
             {0, 0}, {1, 0}, {1, 1}, {0, 1}
         };
         float[] H = Perspective.computeHomography(corners, dst);
         if (H == null) {
-            Log.w(TAG, "单应性矩阵计算失败(4 角共线或退化), 不映射棋子");
-            return;
+            Log.w(TAG, "单应性矩阵计算失败(4 角共线或退化)");
+            if (imgW > 0 && stones.size() >= 4) {
+                Log.w(TAG, "→ 降级用棋子 bbox 拟合网格重试(保住已检棋子)");
+                corners = fitUniformGridCorners(stones, imgW, imgH);
+                H = Perspective.computeHomography(corners, dst);
+            }
+            if (H == null) {
+                Log.w(TAG, "重试仍失败, 不映射棋子");
+                return true;
+            }
         }
         Log.d(TAG, "单应性矩阵 H: "
                 + String.format("[%.4f %.4f %.4f; %.4f %.4f %.4f; %.4f %.4f %.4f]",
@@ -1066,7 +1384,13 @@ public class MokuRecognizer {
                     i, corners[i][0], corners[i][1], r[0], r[1], dst[i][0], dst[i][1], ex, ey));
             if (Math.abs(ex) > 0.1f || Math.abs(ey) > 0.1f) {
                 Log.w(TAG, "H 矩阵 sanity check 失败: corner[" + i + "] 映射误差过大, H 不可用");
-                return; // 不映射棋子,留空棋盘
+                if (imgW > 0 && stones.size() >= 4) {
+                    Log.w(TAG, "→ 降级用棋子 bbox 拟合网格重试(保住已检棋子)");
+                    corners = fitUniformGridCorners(stones, imgW, imgH);
+                    H = Perspective.computeHomography(corners, dst);
+                    if (H != null) break; // 重试成功,跳出 sanity 校验
+                }
+                return true; // 不映射棋子,留空棋盘
             }
         }
         // 按 score 降序
@@ -1076,13 +1400,21 @@ public class MokuRecognizer {
         // 偏差分布统计:0~0.1, 0.1~0.25, 0.25~0.5, 0.5+
         int[] devBuckets = new int[4];
         StringBuilder mapLog = new StringBuilder();
-        // 距离过滤阈值:偏离网格交叉点 > 0.5 个格子视为可疑,丢弃
-        // (因为围棋棋子必然落在交叉点上,偏离过大说明模型输出错误)
-        final float MAX_DEVIATION = 0.5f;
+        // 距离过滤阈值:偏离网格交叉点过大的棋子视为可疑,丢弃。
+        // 原 0.5 偏小,四角/H 不准时整盘网格会系统性偏移半格,导致真子(尤其最底/最右行)
+        // 偏差达 0.5+ 被误丢 → 表现为"少一行"。放宽到 0.72 可在保留误检过滤的同时,
+        // 把因网格整体偏移而偏差 0.5~0.72 的真子救回。现由设置项 maxDeviation 控制。
+        final float MAX_DEVIATION = rs.maxDeviation;
+        // 记录棋子归一化坐标的范围,用于检测 H 矩阵导致的整盘横向/纵向溢出
+        float rxMin = 1f, rxMax = 0f, ryMin = 1f, ryMax = 0f;
         for (Detection d : stones) {
             float[] r = Perspective.applyHomography(H, d.cx, d.cy);
             float gridX = r[0] * (BOARD_SIZE - 1);
             float gridY = r[1] * (BOARD_SIZE - 1);
+            if (r[0] < rxMin) rxMin = r[0];
+            if (r[0] > rxMax) rxMax = r[0];
+            if (r[1] < ryMin) ryMin = r[1];
+            if (r[1] > ryMax) ryMax = r[1];
             int col = Math.round(gridX);
             int row = Math.round(gridY);
             float dx = gridX - col;
@@ -1123,6 +1455,24 @@ public class MokuRecognizer {
                 + " 偏差过大" + droppedFarFromGrid + " 冲突" + droppedConflict);
         Log.i(TAG, String.format("偏差分布: [<0.1]=%d [0.1-0.25)=%d [0.25-0.5)=%d [0.5+]=%d",
                 devBuckets[0], devBuckets[1], devBuckets[2], devBuckets[3]));
+        // 几何异常判定:过多棋子偏差过大/冲突 → 角点/H 不准,建议降级到棋子 bbox 拟合
+        boolean badGeometry = (droppedFarFromGrid + droppedConflict) > stones.size() * 0.10f;
+        // 整盘溢出检测:若棋子归一化坐标整体越出 [0,1](四角把棋盘画大/画偏),
+        // 说明 H 矩阵不准(典型:最右列 rx>1、最底行 ry>1),整行/整列会被系统性偏移丢失。
+        // 余量 overflowMargin 给正常透视一点余量;超过则降级到数据驱动的 fitUniformGridCorners。
+        float m = rs.overflowMargin;
+        boolean overflow = rxMax > 1f + m || rxMin < -m || ryMax > 1f + m || ryMin < -m;
+        if (overflow) {
+            Log.w(TAG, String.format("几何疑似异常: 整盘溢出 rx[%.3f,%.3f] ry[%.3f,%.3f] 超界, 可能四角不准 → 降级棋子bbox拟合",
+                    rxMin, rxMax, ryMin, ryMax));
+            badGeometry = true;
+        }
+        if (badGeometry && !overflow) {
+            Log.w(TAG, String.format("几何疑似异常: 偏差过大%d + 冲突%d 占比 %.0f%% > 10%%, 建议降级棋子bbox拟合",
+                    droppedFarFromGrid, droppedConflict,
+                    (droppedFarFromGrid + droppedConflict) * 100f / stones.size()));
+        }
+        return badGeometry;
     }
 
     /**
@@ -1133,7 +1483,8 @@ public class MokuRecognizer {
      *  - 自适应阈值:根据局部对比度(|d|/std)决策,比固定阈值更稳
      */
     private static void verifyStonesColor(List<Detection> stones,
-                                          android.graphics.Bitmap bmp) {
+                                          android.graphics.Bitmap bmp,
+                                          RecognitionSettings rs) {
         if (bmp == null || stones.isEmpty()) return;
         final int w = bmp.getWidth();
         final int h = bmp.getHeight();
@@ -1194,22 +1545,21 @@ public class MokuRecognizer {
             // 对比度:用背景亮度标准差(木纹变化程度)估计
             float bgStd = stdDev(bVals, boardLum);
             // 归一化决策边界:棋子比棋盘暗/亮 n 倍背景标准差
-            //   |diff| > k * max(std, 8), k=2.0 相对稳健
-            float k = 2.0f;
+            //   |diff| > k * max(std, 8), k 由设置 boundaryK 控制
+            float k = rs.boundaryK;
             float boundary = Math.max(8f, k * bgStd);
-            // 最小绝对门限(极端光照下兜底)
-            boundary = Math.max(boundary, 18f);
-            // 最大边界(防止低噪声场景过于敏感)
-            boundary = Math.min(boundary, 45f);
+            // 最小/最大绝对门限(极端光照下兜底 / 防止低噪声场景过于敏感),由设置控制
+            boundary = Math.max(boundary, rs.boundaryMin);
+            boundary = Math.min(boundary, rs.boundaryMax);
 
             float diff = stoneLum - boardLum;
             int newClass = d.classId;
             // 相对判断优先(自适应)
             if (diff < -boundary) newClass = CLASS_BLACK_STONE;
             else if (diff > boundary) newClass = CLASS_WHITE_STONE;
-            // 绝对亮度兜底(极端亮/暗直接判)
-            else if (stoneLum < 55) newClass = CLASS_BLACK_STONE;
-            else if (stoneLum > 205) newClass = CLASS_WHITE_STONE;
+            // 绝对亮度兜底(极端亮/暗直接判),由设置 absBlackLum/absWhiteLum 控制
+            else if (stoneLum < rs.absBlackLum) newClass = CLASS_BLACK_STONE;
+            else if (stoneLum > rs.absWhiteLum) newClass = CLASS_WHITE_STONE;
 
             if (newClass != d.classId) {
                 if (corrected < 10) { // 只打前 10 条日志避免刷屏
@@ -1431,7 +1781,8 @@ public class MokuRecognizer {
      * 返回补回的棋子总数。
      */
     private static int recoverMissedStones(android.graphics.Bitmap bmp,
-                                           float[][] corners, int[][] board) {
+                                           float[][] corners, int[][] board,
+                                           RecognitionSettings rs) {
         if (bmp == null) return 0;
         final int w = bmp.getWidth(), h = bmp.getHeight();
 
@@ -1466,6 +1817,17 @@ public class MokuRecognizer {
         int recovered = 0;
         StringBuilder detailLog = new StringBuilder();
 
+        // 已落子数:若棋盘已识别足够多子(说明确实是真实棋盘、几何基本可信),
+        // 则对"孤立空位"(四周无已识别子,如整行漏检)也尝试像素验证补救,
+        // 避免某行/某列因模型整行漏检而整行消失。强边界(strongBoundary)已防误补。
+        int placed = 0;
+        for (int r = 0; r < BOARD_SIZE; r++)
+            for (int c = 0; c < BOARD_SIZE; c++)
+                if (board[r][c] != EMPTY) placed++;
+        // 已落子数达到 minPlaced(默认 12)才允许补救孤立空位(含整行漏检),
+        // 避免空盘/接近空盘误补。阈值由设置项 minPlaced 控制。
+        boolean allowLonely = placed >= rs.minPlaced;
+
         for (int r = 0; r < BOARD_SIZE; r++) {
             for (int c = 0; c < BOARD_SIZE; c++) {
                 if (board[r][c] != EMPTY) continue;
@@ -1483,7 +1845,8 @@ public class MokuRecognizer {
                         if (board[nr][nc] != EMPTY) neigh++;
                     }
                 }
-                if (neigh < 1) continue;
+                // 孤立空位(neigh<1):仅当棋盘已识别足够多子时才补救,避免空盘误补
+                if (neigh < 1 && !allowLonely) continue;
 
                 // H⁻¹: 归一化网格 (c/18, r/18) → 图像 (x,y)
                 float rx = (float) c / (BOARD_SIZE - 1);
@@ -1494,7 +1857,7 @@ public class MokuRecognizer {
                 if (ix < pad || ix >= w - pad || iy < pad || iy >= h - pad) continue;
 
                 // 与 verifyStonesColor 同逻辑判断黑/白
-                int judged = judgeStoneAt(ix, iy, stoneR, ringDist, w, h, pix);
+                int judged = judgeStoneAt(ix, iy, stoneR, ringDist, w, h, pix, rs);
                 if (judged == EMPTY) continue;
 
                 board[r][c] = judged;
@@ -1513,7 +1876,8 @@ public class MokuRecognizer {
 
     /** 给定图像位置,用"棋子中心 vs 16方向背景环"亮度对比判断此处 EMPTY/BLACK/WHITE。 */
     private static int judgeStoneAt(int cx, int cy, int stoneR, int ringDist,
-                                    int w, int h, int[] pix) {
+                                    int w, int h, int[] pix,
+                                    RecognitionSettings rs) {
         // 1) 棋子中心:内缩半径 40% 方形
         int innerR = Math.max(2, Math.min(stoneR / 2, 5));
         java.util.List<Float> sVals = new java.util.ArrayList<>(innerR * innerR * 4);
@@ -1548,17 +1912,160 @@ public class MokuRecognizer {
         float boardLum = trimmedMean(bVals);
         float bgStd = stdDev(bVals, boardLum);
 
-        // 3) 决策:阈值比 verifyStonesColor 更保守(宁漏不误检)
-        float boundary = Math.max(12f, 2.5f * bgStd);
-        boundary = Math.max(boundary, 26f);     // 绝对最小门限 ≥26(更严)
-        boundary = Math.min(boundary, 55f);
+        // 3) 决策:阈值比 verifyStonesColor 更保守(宁漏不误检),由设置控制
+        float boundary = Math.max(rs.boundaryBase, rs.boundaryK * bgStd);
+        boundary = Math.max(boundary, rs.boundaryMin);     // 绝对最小门限(默认 26,更严)
+        boundary = Math.min(boundary, rs.boundaryMax);
 
         float diff = stoneLum - boardLum;
-        if (diff < -boundary) return BLACK;                 // 比棋盘暗 → 黑
-        if (diff > boundary) return WHITE;                 // 比棋盘亮 → 白
-        if (stoneLum < 50) return BLACK;                    // 绝对黑兜底
-        if (stoneLum > 210) return WHITE;                   // 绝对白兜底
+        float strongBoundary = boundary * rs.strongBoundaryFactor;
+        if (diff < -strongBoundary) return BLACK;                 // 比棋盘暗 → 黑
+        if (diff > strongBoundary) return WHITE;                 // 比棋盘亮 → 白
+        if (stoneLum < rs.absBlackLum) return BLACK;                    // 绝对黑兜底
+        if (stoneLum > rs.absWhiteLum) return WHITE;                   // 绝对白兜底
         return EMPTY;                                       // 拿不准就空
+    }
+
+    /**
+     * 与 judgeStoneAt 同逻辑的"强信号"版本:返回 {state, confident}。
+     *   state    ∈ {EMPTY, BLACK, WHITE}
+     *   confident=1 表示判定基于"强边界"(|diff| ≥ strongBoundary)或绝对黑/白兜底,
+     *             即高置信;confident=0 表示"弱信号"(边界内但靠绝对亮度兜底)或拿不准。
+     *
+     * 全棋盘逐点复核用它区分"确定有子"与"弱信号",避免用弱信号覆盖/修正模型结果。
+     */
+    private static int[] judgeStoneConfident(int cx, int cy, int stoneR, int ringDist,
+                                             int w, int h, int[] pix,
+                                             RecognitionSettings rs) {
+        int innerR = Math.max(2, Math.min(stoneR / 2, 5));
+        java.util.List<Float> sVals = new java.util.ArrayList<>(innerR * innerR * 4);
+        for (int y = cy - innerR; y <= cy + innerR; y++) {
+            for (int x = cx - innerR; x <= cx + innerR; x++) {
+                if (x < 0 || x >= w || y < 0 || y >= h) continue;
+                int px = pix != null ? pix[y * w + x] : 0;
+                sVals.add(lumOf(px));
+            }
+        }
+        if (sVals.size() < 9) return new int[]{EMPTY, 0};
+        float stoneLum = trimmedMean(sVals);
+
+        final int NUM_DIRS = 16;
+        java.util.List<Float> bVals = new java.util.ArrayList<>(NUM_DIRS);
+        for (int k = 0; k < NUM_DIRS; k++) {
+            double ang = k * 2.0 * Math.PI / NUM_DIRS;
+            int rx = (int) Math.round(cx + Math.cos(ang) * ringDist);
+            int ry = (int) Math.round(cy + Math.sin(ang) * ringDist);
+            if (rx < 2 || rx >= w - 2 || ry < 2 || ry >= h - 2) continue;
+            float bl = 0; int bc = 0;
+            for (int dy = -1; dy <= 1; dy++) {
+                for (int dx = -1; dx <= 1; dx++) {
+                    int px = pix != null ? pix[(ry + dy) * w + (rx + dx)] : 0;
+                    bl += lumOf(px); bc++;
+                }
+            }
+            if (bc > 0) bVals.add(bl / bc);
+        }
+        if (bVals.size() < 6) return new int[]{EMPTY, 0};
+        float boardLum = trimmedMean(bVals);
+        float bgStd = stdDev(bVals, boardLum);
+
+        float boundary = Math.max(rs.boundaryBase, rs.boundaryK * bgStd);
+        boundary = Math.max(boundary, rs.boundaryMin);
+        boundary = Math.min(boundary, rs.boundaryMax);
+
+        float diff = stoneLum - boardLum;
+        float strongBoundary = boundary * rs.strongBoundaryFactor;
+        if (diff < -strongBoundary) return new int[]{BLACK, 1};
+        if (diff > strongBoundary) return new int[]{WHITE, 1};
+        if (stoneLum < rs.absBlackLum)       return new int[]{BLACK, 1};   // 绝对黑兜底(高置信)
+        if (stoneLum > rs.absWhiteLum)      return new int[]{WHITE, 1};   // 绝对白兜底(高置信)
+        return new int[]{EMPTY, 0};                            // 拿不准就空
+    }
+
+    /**
+     * 【全棋盘逐交叉点独立复核 —— "逐格分类范式"的像素实现】
+     *
+     * 思路:在已求解的四角网格(H 矩阵)下,对 19×19 全部 361 个交叉点,在反投影回图像的
+     * 对应位置**逐个独立**判定 空/黑/白;再把"独立判定"与"检测+映射"的结果融合。
+     *
+     * 为什么能根治"少一行/四边缺失/整行漏检":
+     *   - 现有流程的识别完全依赖模型对某行/某边的检测召回;一旦模型整行没检出,
+     *     该行既无检测结果、recover 又可能因孤立被跳过 → 整行消失。
+     *   - 本模块不依赖检测召回,每一格都独立做像素判定,从机制上杜绝整行漏检。
+     *
+     * 融合规则(只增信、不乱改,避免弱信号误伤):
+     *   - board 当前为空 且 独立判定"强信号有子"(confident=1) → 补入(覆盖整行漏检/四边缺)
+     *   - board 当前有子 且 独立判定"强相反"(confident=1 且异色) → 修正(去误检)
+     *   - 其余(弱信号/一致/拿不准) → 保留模型结果,不动
+     *
+     * 仅在已识别棋子数 ≥ MIN_PLACED(确认真棋盘)时启用,空盘/无子图不触发,防误补。
+     *
+     * @return 实际改动(补入+修正)的格子数
+     */
+    private static int fullBoardReview(Bitmap bmp, float[][] corners, int[][] board,
+                                       RecognitionSettings rs) {
+        int w = bmp.getWidth(), h = bmp.getHeight();
+        if (w <= 0 || h <= 0) return 0;
+
+        // 统计已放置数,确认真棋盘才启用全棋盘复核(阈值由设置 minPlaced 控制)
+        int placed = 0;
+        for (int r = 0; r < BOARD_SIZE; r++)
+            for (int c = 0; c < BOARD_SIZE; c++)
+                if (board[r][c] != EMPTY) placed++;
+        if (placed < rs.minPlaced) return 0;
+
+        // 与 recoverMissedStones 一致:H 将"图像(x,y)"映射到"归一化网格(0..1)"
+        float[][] dst = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+        float[] H = Perspective.computeHomography(corners, dst);
+        if (H == null) return 0;
+
+        int[] pix = new int[w * h];
+        bmp.getPixels(pix, 0, w, 0, 0, w, h);
+
+        // 计算相邻交叉点间距(像素),用于确定采样半径 stoneR 与环距 ringDist。
+        // 归一化坐标:第 c 列 = c/(N-1),第 r 行 = r/(N-1)
+        float[] p00 = Perspective.applyHomography(H, 0f, 0f);
+        float[] p10 = Perspective.applyHomography(H, 1f / (BOARD_SIZE - 1), 0f);
+        double spacing = Math.hypot(p10[0] - p00[0], p10[1] - p00[1]);
+        double stoneR = Math.max(4, spacing * 0.42);
+        double ringDist = Math.max(4, spacing * 0.60);
+
+        int changed = 0, added = 0, corrected = 0;
+        StringBuilder sb = new StringBuilder();
+        for (int r = 0; r < BOARD_SIZE; r++) {
+            for (int c = 0; c < BOARD_SIZE; c++) {
+                float rx = (float) c / (BOARD_SIZE - 1);
+                float ry = (float) r / (BOARD_SIZE - 1);
+                float[] ip = Perspective.applyHomography(H, rx, ry);
+                int cx = (int) Math.round(ip[0]);
+                int cy = (int) Math.round(ip[1]);
+                if (cx < 2 || cx >= w - 2 || cy < 2 || cy >= h - 2) continue;
+
+                int cur = board[r][c];
+                int[] j = judgeStoneConfident(cx, cy, (int) stoneR, (int) ringDist, w, h, pix, rs);
+                int state = j[0], conf = j[1];
+
+                if (cur == EMPTY) {
+                    if (state != EMPTY && conf == 1) {
+                        board[r][c] = state;
+                        added++; changed++;
+                        if (sb.length() < 200)
+                            sb.append(String.format(" 补[%d,%d]=%s ", r, c, state == BLACK ? "黑" : "白"));
+                    }
+                } else {
+                    if (state != EMPTY && state != cur && conf == 1) {
+                        board[r][c] = state;
+                        corrected++; changed++;
+                        if (sb.length() < 200)
+                            sb.append(String.format(" 改[%d,%d]→%s ", r, c, state == BLACK ? "黑" : "白"));
+                    }
+                }
+            }
+        }
+        if (changed > 0)
+            Log.i(TAG, "全棋盘逐点复核: 改动 " + changed + " 格 (补 " + added + ", 修正误检 " + corrected + ")"
+                    + sb);
+        return changed;
     }
 
     /** 求 3×3 矩阵的逆。退化返回 null。 */
