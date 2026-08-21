@@ -17,6 +17,15 @@ public class RecognitionSettings {
 
     // ===== 默认值(2026-08-21 调整:治"竖向少一行 + 右侧假子") =====
 
+    /** 棋子检测置信度阈值。score 低于此值的棋子被丢弃。
+     *  降低 → 召回更多棋子但可能多误检; 升高 → 更精确但漏检多。
+     *  Kaya 默认 0.05; 0.035 平衡召回与精确。可调范围 0.015~0.10。 */
+    public static final float DEF_THRESHOLD = 0.035f;
+
+    /** 角点检测置信度阈值。角点信号弱,阈值远低于棋子。
+     *  Kaya 默认 0.005。一般不需调整。 */
+    public static final float DEF_CORNER_THRESHOLD = 0.005f;
+
     /** 棋子偏离交叉点超过多少格视为可疑丢弃。
      *  改大:救回因四角/H 不准而整盘偏移的真子(尤其最底/最右行,表现为"少一行");
      *  改小:更抗误检。默认 0.80(2026-08-21 由 0.72 放宽:整盘网格偏移时底部真子
@@ -59,6 +68,8 @@ public class RecognitionSettings {
     public static final int DEF_ABS_WHITE_LUM = 225;
 
     // ===== 字段 =====
+    public float threshold;
+    public float cornerThreshold;
     public float maxDeviation;
     public float overflowMargin;
     public float boundaryMin;
@@ -71,6 +82,8 @@ public class RecognitionSettings {
     public int absWhiteLum;
 
     public RecognitionSettings() {
+        this.threshold = DEF_THRESHOLD;
+        this.cornerThreshold = DEF_CORNER_THRESHOLD;
         this.maxDeviation = DEF_MAX_DEVIATION;
         this.overflowMargin = DEF_OVERFLOW_MARGIN;
         this.boundaryMin = DEF_BOUNDARY_MIN;
@@ -87,6 +100,8 @@ public class RecognitionSettings {
     public static RecognitionSettings load(Context ctx) {
         RecognitionSettings s = new RecognitionSettings();
         SharedPreferences p = ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        s.threshold = p.getFloat("threshold", DEF_THRESHOLD);
+        s.cornerThreshold = p.getFloat("cornerThreshold", DEF_CORNER_THRESHOLD);
         s.maxDeviation = p.getFloat("maxDeviation", DEF_MAX_DEVIATION);
         s.overflowMargin = p.getFloat("overflowMargin", DEF_OVERFLOW_MARGIN);
         s.boundaryMin = p.getFloat("boundaryMin", DEF_BOUNDARY_MIN);
@@ -104,6 +119,8 @@ public class RecognitionSettings {
     public void save(Context ctx) {
         SharedPreferences p = ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
         SharedPreferences.Editor e = p.edit();
+        e.putFloat("threshold", threshold);
+        e.putFloat("cornerThreshold", cornerThreshold);
         e.putFloat("maxDeviation", maxDeviation);
         e.putFloat("overflowMargin", overflowMargin);
         e.putFloat("boundaryMin", boundaryMin);
@@ -119,6 +136,8 @@ public class RecognitionSettings {
 
     /** 恢复默认。 */
     public void resetToDefault() {
+        threshold = DEF_THRESHOLD;
+        cornerThreshold = DEF_CORNER_THRESHOLD;
         maxDeviation = DEF_MAX_DEVIATION;
         overflowMargin = DEF_OVERFLOW_MARGIN;
         boundaryMin = DEF_BOUNDARY_MIN;

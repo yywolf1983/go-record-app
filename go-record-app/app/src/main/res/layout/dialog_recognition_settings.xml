@@ -1,0 +1,205 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="16dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+    <!-- 棋子检测阈值 -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="棋子检测阈值"
+        android:textStyle="bold"
+        android:textSize="14sp"
+        android:layout_marginBottom="4dp" />
+
+    <TextView
+        android:id="@+id/tvThresholdVal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textSize="13sp"
+        android:textColor="#888"
+        android:layout_marginBottom="8dp" />
+
+    <SeekBar
+        android:id="@+id/seekThreshold"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:max="100"
+        android:layout_marginBottom="4dp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="降低→召回更多棋子(可能误检); 升高→更精确(漏检多)。范围 0.015~0.10"
+        android:textSize="11sp"
+        android:textColor="#AAA"
+        android:layout_marginBottom="16dp" />
+
+    <!-- 角点检测阈值 -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="角点检测阈值"
+        android:textStyle="bold"
+        android:textSize="14sp"
+        android:layout_marginBottom="4dp" />
+
+    <TextView
+        android:id="@+id/tvCornerThresholdVal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textSize="13sp"
+        android:textColor="#888"
+        android:layout_marginBottom="8dp" />
+
+    <SeekBar
+        android:id="@+id/seekCornerThreshold"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:max="50"
+        android:layout_marginBottom="4dp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="角点信号弱, 阈值远低于棋子。一般不需调整。范围 0.001~0.05"
+        android:textSize="11sp"
+        android:textColor="#AAA"
+        android:layout_marginBottom="16dp" />
+
+    <!-- 最大偏差 -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="棋子位置最大偏差(格)"
+        android:textStyle="bold"
+        android:textSize="14sp"
+        android:layout_marginBottom="4dp" />
+
+    <TextView
+        android:id="@+id/tvMaxDeviationVal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textSize="13sp"
+        android:textColor="#888"
+        android:layout_marginBottom="8dp" />
+
+    <SeekBar
+        android:id="@+id/seekMaxDeviation"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:max="100"
+        android:layout_marginBottom="4dp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="棋子偏离交叉点超过此值则丢弃。改大→救回偏移的真子; 改小→更抗误检。范围 0.3~1.0"
+        android:textSize="11sp"
+        android:textColor="#AAA"
+        android:layout_marginBottom="16dp" />
+
+    <!-- 溢出余量 -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="整盘溢出余量"
+        android:textStyle="bold"
+        android:textSize="14sp"
+        android:layout_marginBottom="4dp" />
+
+    <TextView
+        android:id="@+id/tvOverflowMarginVal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textSize="13sp"
+        android:textColor="#888"
+        android:layout_marginBottom="8dp" />
+
+    <SeekBar
+        android:id="@+id/seekOverflowMargin"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:max="30"
+        android:layout_marginBottom="4dp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="棋子坐标超出[0-余量, 1+余量]则触发降级。改大→容忍更多透视变形。范围 0.0~0.15"
+        android:textSize="11sp"
+        android:textColor="#AAA"
+        android:layout_marginBottom="16dp" />
+
+    <!-- 绝对黑亮度 -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="绝对黑亮度阈值"
+        android:textStyle="bold"
+        android:textSize="14sp"
+        android:layout_marginBottom="4dp" />
+
+    <TextView
+        android:id="@+id/tvAbsBlackLumVal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textSize="13sp"
+        android:textColor="#888"
+        android:layout_marginBottom="8dp" />
+
+    <SeekBar
+        android:id="@+id/seekAbsBlackLum"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:max="100"
+        android:layout_marginBottom="4dp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="亮度低于此值直接判黑。范围 10~80"
+        android:textSize="11sp"
+        android:textColor="#AAA"
+        android:layout_marginBottom="16dp" />
+
+    <!-- 绝对白亮度 -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="绝对白亮度阈值"
+        android:textStyle="bold"
+        android:textSize="14sp"
+        android:layout_marginBottom="4dp" />
+
+    <TextView
+        android:id="@+id/tvAbsWhiteLumVal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textSize="13sp"
+        android:textColor="#888"
+        android:layout_marginBottom="8dp" />
+
+    <SeekBar
+        android:id="@+id/seekAbsWhiteLum"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:max="60"
+        android:layout_marginBottom="4dp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="亮度高于此值直接判白。范围 200~255"
+        android:textSize="11sp"
+        android:textColor="#AAA"
+        android:layout_marginBottom="16dp" />
+
+    </LinearLayout>
+</ScrollView>

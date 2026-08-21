@@ -432,10 +432,12 @@ import java.util.Locale;
         btnComment.setOnClickListener(v -> onComment());
         btnMark.setOnClickListener(v -> onMark());
         // btnPlace 融合摆子+识别:摆子模式下点击=完成摆子,非摆子模式点击=弹出选项菜单
+        // 长按: 弹出识别参数设置
         btnPlace.setOnClickListener(v -> {
             if (isPlaceMode) onPlace();
             else showPlaceOrScanMenu();
         });
+        btnPlace.setOnLongClickListener(v -> { showRecognitionSettings(); return true; });
         btnDeleteBranch.setOnClickListener(v -> onDeleteBranch());
         btnScore.setOnClickListener(v -> onScore());
         btnShowNumbers.setOnClickListener(v -> onShowNumbers());
@@ -920,16 +922,34 @@ import java.util.Locale;
     // ==================== 拍照识别 (Moku ONNX) ====================
 
     /** 点击识别按钮：弹出"拍照/相册"选择对话框。 */
-    /** 弹出菜单选择 [摆子 / 拍照识别 / 相册识别],融合原 btnPlace + btnScan。 */
+    /** 弹出菜单选择 [摆子 / 拍照识别 / 相册识别],带图标。 */
     private void showPlaceOrScanMenu() {
         String[] options = {
             getString(R.string.place_stones),
             getString(R.string.scan_camera),
             getString(R.string.scan_gallery)
         };
+        int[] icons = {
+            R.drawable.ic_place,
+            R.drawable.ic_camera,
+            R.drawable.ic_gallery
+        };
+        // 自定义 ArrayAdapter: 左图标 + 文字
+        ArrayAdapter<String> adapter = new ArrayAdapter<String>(
+                this, android.R.layout.select_dialog_item, options) {
+            @Override
+            public View getView(int position, View convertView, ViewGroup parent) {
+                View view = super.getView(position, convertView, parent);
+                TextView tv = (TextView) view;
+                tv.setCompoundDrawablesWithIntrinsicBounds(icons[position], 0, 0, 0);
+                tv.setCompoundDrawablePadding(24);
+                tv.setTextSize(16);
+                return view;
+            }
+        };
         new AlertDialog.Builder(this)
             .setTitle(R.string.place_stones)
-            .setItems(options, (dialog, which) -> {
+            .setAdapter(adapter, (dialog, which) -> {
                 switch (which) {
                     case 0:
                         onPlace();
@@ -1002,6 +1022,123 @@ import java.util.Locale;
         else if (requestCode == 1011) startGalleryPick();
     }
 
+    /** 长按摆子: 弹出识别参数设置对话框 */
+    private void showRecognitionSettings() {
+        com.gosgf.app.util.RecognitionSettings rs =
+                com.gosgf.app.util.RecognitionSettings.load(this);
+        View view = getLayoutInflater().inflate(R.layout.dialog_recognition_settings, null);
+
+        SeekBar seekThreshold = view.findViewById(R.id.seekThreshold);
+        TextView tvThresholdVal = view.findViewById(R.id.tvThresholdVal);
+        SeekBar seekCornerThreshold = view.findViewById(R.id.seekCornerThreshold);
+        TextView tvCornerThresholdVal = view.findViewById(R.id.tvCornerThresholdVal);
+        SeekBar seekMaxDeviation = view.findViewById(R.id.seekMaxDeviation);
+        TextView tvMaxDeviationVal = view.findViewById(R.id.tvMaxDeviationVal);
+        SeekBar seekOverflowMargin = view.findViewById(R.id.seekOverflowMargin);
+        TextView tvOverflowMarginVal = view.findViewById(R.id.tvOverflowMarginVal);
+        SeekBar seekAbsBlackLum = view.findViewById(R.id.seekAbsBlackLum);
+        TextView tvAbsBlackLumVal = view.findViewById(R.id.tvAbsBlackLumVal);
+        SeekBar seekAbsWhiteLum = view.findViewById(R.id.seekAbsWhiteLum);
+        TextView tvAbsWhiteLumVal = view.findViewById(R.id.tvAbsWhiteLumVal);
+
+        // threshold: 0.015~0.10 → 0~100
+        seekThreshold.setMax(100);
+        seekThreshold.setProgress((int) ((rs.threshold - 0.015f) / 0.085f * 100));
+        tvThresholdVal.setText(String.format(Locale.getDefault(), "%.3f", rs.threshold));
+        seekThreshold.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(SeekBar sb, int progress, boolean fromUser) {
+                float v = 0.015f + progress / 100f * 0.085f;
+                tvThresholdVal.setText(String.format(Locale.getDefault(), "%.3f", v));
+            }
+            public void onStartTrackingTouch(SeekBar sb) {}
+            public void onStopTrackingTouch(SeekBar sb) {}
+        });
+
+        // cornerThreshold: 0.001~0.05 → 0~50
+        seekCornerThreshold.setMax(50);
+        seekCornerThreshold.setProgress((int) ((rs.cornerThreshold - 0.001f) / 0.049f * 50));
+        tvCornerThresholdVal.setText(String.format(Locale.getDefault(), "%.3f", rs.cornerThreshold));
+        seekCornerThreshold.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(SeekBar sb, int progress, boolean fromUser) {
+                float v = 0.001f + progress / 50f * 0.049f;
+                tvCornerThresholdVal.setText(String.format(Locale.getDefault(), "%.3f", v));
+            }
+            public void onStartTrackingTouch(SeekBar sb) {}
+            public void onStopTrackingTouch(SeekBar sb) {}
+        });
+
+        // maxDeviation: 0.3~1.0 → 0~100
+        seekMaxDeviation.setMax(100);
+        seekMaxDeviation.setProgress((int) ((rs.maxDeviation - 0.3f) / 0.7f * 100));
+        tvMaxDeviationVal.setText(String.format(Locale.getDefault(), "%.2f", rs.maxDeviation));
+        seekMaxDeviation.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(SeekBar sb, int progress, boolean fromUser) {
+                float v = 0.3f + progress / 100f * 0.7f;
+                tvMaxDeviationVal.setText(String.format(Locale.getDefault(), "%.2f", v));
+            }
+            public void onStartTrackingTouch(SeekBar sb) {}
+            public void onStopTrackingTouch(SeekBar sb) {}
+        });
+
+        // overflowMargin: 0.0~0.15 → 0~30
+        seekOverflowMargin.setMax(30);
+        seekOverflowMargin.setProgress((int) (rs.overflowMargin / 0.15f * 30));
+        tvOverflowMarginVal.setText(String.format(Locale.getDefault(), "%.2f", rs.overflowMargin));
+        seekOverflowMargin.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(SeekBar sb, int progress, boolean fromUser) {
+                float v = progress / 30f * 0.15f;
+                tvOverflowMarginVal.setText(String.format(Locale.getDefault(), "%.2f", v));
+            }
+            public void onStartTrackingTouch(SeekBar sb) {}
+            public void onStopTrackingTouch(SeekBar sb) {}
+        });
+
+        // absBlackLum: 10~80 → 0~100
+        seekAbsBlackLum.setMax(70);
+        seekAbsBlackLum.setProgress(rs.absBlackLum - 10);
+        tvAbsBlackLumVal.setText(String.valueOf(rs.absBlackLum));
+        seekAbsBlackLum.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(SeekBar sb, int progress, boolean fromUser) {
+                tvAbsBlackLumVal.setText(String.valueOf(progress + 10));
+            }
+            public void onStartTrackingTouch(SeekBar sb) {}
+            public void onStopTrackingTouch(SeekBar sb) {}
+        });
+
+        // absWhiteLum: 200~255 → 0~55
+        seekAbsWhiteLum.setMax(55);
+        seekAbsWhiteLum.setProgress(rs.absWhiteLum - 200);
+        tvAbsWhiteLumVal.setText(String.valueOf(rs.absWhiteLum));
+        seekAbsWhiteLum.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(SeekBar sb, int progress, boolean fromUser) {
+                tvAbsWhiteLumVal.setText(String.valueOf(progress + 200));
+            }
+            public void onStartTrackingTouch(SeekBar sb) {}
+            public void onStopTrackingTouch(SeekBar sb) {}
+        });
+
+        new AlertDialog.Builder(this)
+            .setTitle("识别参数设置")
+            .setView(view)
+            .setPositiveButton("保存", (d, w) -> {
+                rs.threshold = 0.015f + seekThreshold.getProgress() / 100f * 0.085f;
+                rs.cornerThreshold = 0.001f + seekCornerThreshold.getProgress() / 50f * 0.049f;
+                rs.maxDeviation = 0.3f + seekMaxDeviation.getProgress() / 100f * 0.7f;
+                rs.overflowMargin = seekOverflowMargin.getProgress() / 30f * 0.15f;
+                rs.absBlackLum = seekAbsBlackLum.getProgress() + 10;
+                rs.absWhiteLum = seekAbsWhiteLum.getProgress() + 200;
+                rs.save(this);
+                Toast.makeText(this, "设置已保存", Toast.LENGTH_SHORT).show();
+            })
+            .setNeutralButton("恢复默认", (d, w) -> {
+                rs.resetToDefault();
+                rs.save(this);
+                Toast.makeText(this, "已恢复默认设置", Toast.LENGTH_SHORT).show();
+            })
+            .setNegativeButton("取消", null)
+            .show();
+    }
+
     /** 启动裁剪 Activity, 用户手动框选棋盘区域后再识别 */
     private void startCropActivity(android.net.Uri uri) {
         Intent intent = new Intent(this, CropActivity.class);
@@ -1032,7 +1169,8 @@ import java.util.Locale;
                 if (mokuRecognizer == null || !mokuRecognizer.isReady()) {
                     throw new IllegalStateException("模型加载失败");
                 }
-                result = mokuRecognizer.recognize(bmp);
+                result = mokuRecognizer.recognize(bmp,
+                        com.gosgf.app.util.RecognitionSettings.load(this));
             } catch (Exception e) {
                 err = e;
                 Log.e(TAG, "识别异常: " + e.getClass().getSimpleName()

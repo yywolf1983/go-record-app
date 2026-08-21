@@ -135,7 +135,7 @@ public class MokuRecognizer {
      * @return 19×19 棋盘矩阵结果
      */
     public RecognitionResult recognize(Bitmap bitmap) throws Exception {
-        return recognize(bitmap, DEFAULT_THRESHOLD, new RecognitionSettings());
+        return recognize(bitmap, DEFAULT_THRESHOLD, false, new RecognitionSettings());
     }
 
     public RecognitionResult recognize(Bitmap bitmap, float threshold) throws Exception {
@@ -144,7 +144,7 @@ public class MokuRecognizer {
 
     /** 使用自定义识别设置(来自设置页)进行识别。 */
     public RecognitionResult recognize(Bitmap bitmap, RecognitionSettings rs) throws Exception {
-        return recognize(bitmap, DEFAULT_THRESHOLD, rs);
+        return recognize(bitmap, rs.threshold, false, rs);
     }
 
     /**
