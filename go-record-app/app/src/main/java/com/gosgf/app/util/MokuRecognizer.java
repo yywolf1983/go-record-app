@@ -310,13 +310,94 @@ public class MokuRecognizer {
                     scaledCorners[2][0], scaledCorners[2][1],
                     scaledCorners[3][0], scaledCorners[3][1]));
 
-        // 整图 TTA + 注入角点(用户已指定棋盘范围,不做阶段 2 自动再裁剪)
+        // 角点精校准统一在 postprocess 主路径执行(那里有模型角点检测结果):
+        // 模型自带角点吸附优先,Harris 图像特征兜底。
         PreprocessResult pp1 = preprocess(bitmap, srcW, srcH);
         float[][] out1 = runInference(pp1.input);
         RecognitionResult rr = postprocessWithTTA(out1, bitmap, pp1, srcW, srcH, threshold,
                 false, rs, scaledCorners);
         // 重试传原始角点(未缩放):重试路径内部会再做一次同比例缩放,避免二次缩放错位
         return maybeRetry(rawBitmap, rr, threshold, rs, corners);
+    }
+
+    /**
+     * 手动注入角点吸附:在每个角点附近 ±SEARCH_R 像素窗口内,
+     * 用"棋盘角点"特征(两条暗线交叉)评分找最优位置,弥补手指拖拽的定位误差。
+     * 评分 = Harris 角点响应 × 中心暗度权重(棋盘线是暗的,棋子边缘中心亮会被削弱)。
+     * 找不到强特征时保持原位置(不激进修改)。
+     */
+    private static float[][] refineCornersToGrid(Bitmap bmp, float[][] corners, boolean[] locked) {
+        int w = bmp.getWidth();
+        int h = bmp.getHeight();
+        if (w <= 0 || h <= 0) return corners;
+        float[] gray = new float[w * h];
+        int[] pix = new int[w * h];
+        bmp.getPixels(pix, 0, w, 0, 0, w, h);
+        for (int i = 0; i < pix.length; i++) {
+            int p = pix[i];
+            gray[i] = ((p >> 16) & 0xFF) * 0.299f
+                    + ((p >> 8) & 0xFF) * 0.587f
+                    + (p & 0xFF) * 0.114f;
+        }
+        final int SEARCH_R = 24; // 搜索半径
+        final int NBR = 5;       // Harris 结构张量邻域半径
+        float[][] out = new float[4][2];
+        for (int c = 0; c < 4; c++) {
+            int cx = Math.round(corners[c][0]);
+            int cy = Math.round(corners[c][1]);
+            out[c][0] = corners[c][0];
+            out[c][1] = corners[c][1];
+            // 已被模型再校准吸附的角点:模型定位更准,不再用 Harris 图像特征拉偏
+            if (locked != null && locked[c]) {
+                Log.d(TAG, String.format("角点%d 已由模型吸附, 跳过 Harris", c));
+                continue;
+            }
+            float bestScore = -Float.MAX_VALUE;
+            int bx = cx, by = cy;
+            for (int dy = -SEARCH_R; dy <= SEARCH_R; dy++) {
+                for (int dx = -SEARCH_R; dx <= SEARCH_R; dx++) {
+                    int x = cx + dx;
+                    int y = cy + dy;
+                    if (x < NBR || x >= w - NBR - 1 || y < NBR || y >= h - NBR - 1) continue;
+                    float ixx = 0, iyy = 0, ixy = 0;
+                    for (int yy = -NBR; yy <= NBR; yy++) {
+                        for (int xx = -NBR; xx <= NBR; xx++) {
+                            int x0 = x + xx;
+                            int y0 = y + yy;
+                            float gx = gray[y0 * w + Math.min(w - 1, x0 + 1)]
+                                     - gray[y0 * w + Math.max(0, x0 - 1)];
+                            float gy = gray[Math.min(h - 1, y0 + 1) * w + x0]
+                                     - gray[Math.max(0, y0 - 1) * w + x0];
+                            ixx += gx * gx;
+                            iyy += gy * gy;
+                            ixy += gx * gy;
+                        }
+                    }
+                    float det = ixx * iyy - ixy * ixy;
+                    float trace = ixx + iyy;
+                    float harris = det - 0.06f * trace * trace;
+                    // 棋盘角交叉处中心像素通常是暗的(线交叉);棋子边缘中心不暗,降低误吸
+                    float centerDark = 255f - gray[y * w + x];
+                    float score = harris * (0.5f + centerDark / 255f);
+                    if (score > bestScore) {
+                        bestScore = score;
+                        bx = x;
+                        by = y;
+                    }
+                }
+            }
+            // 只在找到显著特征时才替换(避免背景杂乱区域被吸到无关位置)
+            if (bestScore > 50f && (Math.abs(bx - cx) + Math.abs(by - cy)) > 1) {
+                out[c][0] = bx;
+                out[c][1] = by;
+                Log.d(TAG, String.format("角点%d 吸附: (%d,%d) → (%d,%d), score=%.1f",
+                        c, cx, cy, bx, by, bestScore));
+            } else {
+                Log.d(TAG, String.format("角点%d 保持原位: (%d,%d), score=%.1f",
+                        c, cx, cy, bestScore));
+            }
+        }
+        return out;
     }
 
     /**
@@ -943,9 +1024,14 @@ public class MokuRecognizer {
 
         float[][] corners;
         if (externalCorners != null) {
-            // 手动注入四角(用户拖动校正):信任用户指定范围,跳过自动检测与覆盖/退化降级
-            corners = externalCorners;
-            Log.i(TAG, "手动注入 4 角(用户校正): "
+            // 手动注入四角(用户拖动校正):用户拖的角即权威,跳过自动检测与覆盖/退化降级。
+            // 注意:绝不用模型角点吸附用户位置——用户正是因模型角点不准才手动校正,
+            // 吸附(大窗口±¼边长)会把用户拖的角拉回"模型认为的位置",导致校正完全无效。
+            // 仅做 Harris 图像特征局部精修(±24px 窗口内找棋盘角特征,无显著特征则保持原位),
+            // 再交由棋子网格拟合(refineHWithStones)用棋子分布反推精确 H。
+            boolean[] snapped = new boolean[4];
+            corners = refineCornersToGrid(srcBmp, externalCorners, snapped);
+            Log.i(TAG, "手动注入 4 角(Harris 精修后): "
                     + String.format("TL(%.0f,%.0f) TR(%.0f,%.0f) BR(%.0f,%.0f) BL(%.0f,%.0f)",
                         corners[0][0], corners[0][1], corners[1][0], corners[1][1],
                         corners[2][0], corners[2][1], corners[3][0], corners[3][1]));
@@ -1000,13 +1086,22 @@ public class MokuRecognizer {
         verifyStonesColor(stones, srcBmp, rs);
 
         // 棋子映射到 19×19 网格
-        boolean badGeo = mapStonesToGrid(stones, corners, out.board, imgW, imgH, rs);
+        // 注入角点路径(externalCorners != null):启用棋子网格拟合再校准——
+        // 用手动四角做粗 H,再用检测棋子反推精确 H,消除手指拖拽误差
+        boolean badGeo = mapStonesToGrid(stones, corners, out.board, imgW, imgH, rs,
+                externalCorners != null);
         // 几何异常(过多棋子偏差过大/冲突,说明角点/H 不准):降级到棋子 bbox 拟合网格重映射
         if (badGeo && stones.size() >= 4) {
-            Log.w(TAG, "→ 主路径几何异常, 降级用棋子 bbox 拟合网格重映射(避免角点不准导致整盘错)");
-            corners = fitUniformGridCorners(stones, imgW, imgH);
-            out.board = new int[BOARD_SIZE][BOARD_SIZE];
-            mapStonesToGrid(stones, corners, out.board, imgW, imgH, rs);
+            if (externalCorners != null) {
+                // 手动注入角点:信任用户指定范围,不降级(均匀网格假设对透视变形棋盘是错的,
+                // 降级反而让正确校正结果变乱)。偏差由 recoverMissedStones/fullBoardReview 用注入 H 补。
+                Log.w(TAG, "→ 注入角点路径几何偏差较大, 保持用户角点并靠反投影复核补正(不降级)");
+            } else {
+                Log.w(TAG, "→ 主路径几何异常, 降级用棋子 bbox 拟合网格重映射(避免角点不准导致整盘错)");
+                corners = fitUniformGridCorners(stones, imgW, imgH);
+                out.board = new int[BOARD_SIZE][BOARD_SIZE];
+                mapStonesToGrid(stones, corners, out.board, imgW, imgH, rs);
+            }
         }
 
         // 模型漏检恢复: 反投影每个空网格交点回图像,采样像素确认
@@ -1458,6 +1553,19 @@ public class MokuRecognizer {
     private static boolean mapStonesToGrid(List<Detection> stones, float[][] corners, int[][] board,
                                          int imgW, int imgH,
                                          RecognitionSettings rs) {
+        // 兼容性签名:自动检测/均匀网格路径不启用棋子拟合再校准
+        return mapStonesToGrid(stones, corners, board, imgW, imgH, rs, false);
+    }
+
+    /**
+     * @param refineWithStones true 时用检测到的棋子做"网格拟合再校准":
+     *                         手动四角只提供粗范围,棋子检测(模型)是亚像素可靠的,
+     *                         以棋子中心↔最近网格点为点对,超定最小二乘反推精确 H,
+     *                         把手指拖拽误差系统性消除(比局部 Harris 吸附强得多)。
+     */
+    private static boolean mapStonesToGrid(List<Detection> stones, float[][] corners, int[][] board,
+                                         int imgW, int imgH,
+                                         RecognitionSettings rs, boolean refineWithStones) {
         float[][] dst = {
             {0, 0}, {1, 0}, {1, 1}, {0, 1}
         };
@@ -1474,12 +1582,38 @@ public class MokuRecognizer {
                 return true;
             }
         }
+        if (refineWithStones && stones.size() >= 4) {
+            StringBuilder rb = new StringBuilder();
+            float[] H2 = refineHWithStones(stones, H, rs, rb);
+            Log.i(TAG, "棋子网格拟合再校准: " + rb);
+            if (H2 != null) {
+                H = H2;
+                // 精 H 折算回 4 角(标准网格角逆映射回图像),供下游 recoverMissedStones/
+                // fullBoardReview 使用一致网格,避免它们用粗角点反投影误补错位子
+                float[] Hi = Perspective.invertH(H);
+                if (Hi != null) {
+                    for (int i = 0; i < 4; i++) {
+                        float[] p = Perspective.applyHomography(Hi, dst[i][0], dst[i][1]);
+                        corners[i][0] = p[0];
+                        corners[i][1] = p[1];
+                    }
+                    Log.i(TAG, String.format("精 H 折算 4 角: TL(%.0f,%.0f) TR(%.0f,%.0f)"
+                                    + " BR(%.0f,%.0f) BL(%.0f,%.0f)",
+                            corners[0][0], corners[0][1], corners[1][0], corners[1][1],
+                            corners[2][0], corners[2][1], corners[3][0], corners[3][1]));
+                }
+            }
+        }
         Log.d(TAG, "单应性矩阵 H: "
                 + String.format("[%.4f %.4f %.4f; %.4f %.4f %.4f; %.4f %.4f %.4f]",
                     H[0], H[1], H[2], H[3], H[4], H[5], H[6], H[7], H[8]));
         // Sanity check: 把 4 角本身映射回去,应该接近 (0,0)(1,0)(1,1)(0,1)
-        // 误差大说明 H 矩阵错误(4 角顺序错乱 / 位置不合理)
-        for (int i = 0; i < 4; i++) {
+        // 误差大说明 H 矩阵错误(4 角顺序错乱 / 位置不合理)。
+        // 注入路径(refineWithStones)拟合 H 由棋子驱动,边界可轻微外扩,不做此校验。
+        if (refineWithStones) {
+            Log.d(TAG, "注入角点路径: H 由棋子拟合驱动,跳过 4 角 sanity 校验");
+        } else {
+            for (int i = 0; i < 4; i++) {
             float[] r = Perspective.applyHomography(H, corners[i][0], corners[i][1]);
             float ex = r[0] - dst[i][0];
             float ey = r[1] - dst[i][1];
@@ -1495,6 +1629,7 @@ public class MokuRecognizer {
                 }
                 return true; // 不映射棋子,留空棋盘
             }
+        }
         }
         // 按 score 降序
         stones.sort((a, b) -> Float.compare(b.score, a.score));
@@ -1576,6 +1711,118 @@ public class MokuRecognizer {
                     (droppedFarFromGrid + droppedConflict) * 100f / stones.size()));
         }
         return badGeometry;
+    }
+
+    /**
+     * 棋子网格拟合再校准（手动四角路径）:
+     * 注入角点提供粗范围,初始 H 把棋子映射到网格后,以"棋子中心 ↔ 最近网格点"为点对,
+     * 超定最小二乘拟合更精确的 H,并迭代剔除离群点。返回 null 表示未改善(保持原 H)。
+     */
+    private static float[] refineHWithStones(List<Detection> stones, float[] H0,
+                                             RecognitionSettings rs, StringBuilder log) {
+        float[] H = H0;
+        float bestDev = meanGridDev(stones, H);
+        float maxDev = rs.maxDeviation; // 离群剔除阈值
+        log.append(String.format("初始平均偏差=%.3f", bestDev));
+        // 保护:初始偏差过大(>0.4 格)说明注入角点严重失准/自交,H 不可信,
+        // 棋子映射关系混乱,拟合会收敛到错误局部,此时保持注入角点不拟合
+        if (bestDev > 0.4f) {
+            log.append(" 过大,H 不可信,放弃拟合");
+            return null;
+        }
+        // 角点漂移保护:拟合点对全部来自棋盘内部棋子(col/row 在 1..17),四角外推不受约束;
+        // 棋子稀疏/偏居一侧时,最小二乘可能在"棋盘中心对齐"的同时把四角漂出棋盘外。
+        // 以粗 H 折算的四角为锚,精 H 任一角相对锚点漂移 > 对角线 12%(下限 24px) → 放弃
+        // 该拟合,防止网格外扩把棋盘外背景当成有效区域(全盘复核会在那里补出假子)。
+        float[][] dst = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+        float[] H0inv = Perspective.invertH(H0);
+        float[][] anchor = new float[4][2]; // 注入四角(图像坐标)
+        float diag = 0f;
+        if (H0inv != null) {
+            for (int i = 0; i < 4; i++) {
+                float[] p = Perspective.applyHomography(H0inv, dst[i][0], dst[i][1]);
+                anchor[i][0] = p[0];
+                anchor[i][1] = p[1];
+            }
+            diag = Math.max(
+                    (float) Math.hypot(anchor[1][0] - anchor[0][0], anchor[1][1] - anchor[0][1]),
+                    (float) Math.hypot(anchor[2][0] - anchor[1][0], anchor[2][1] - anchor[1][1]));
+        }
+        float driftLimit = Math.max(diag * 0.12f, 24f);
+        for (int iter = 0; iter < 3; iter++) {
+            List<float[]> pairs = new ArrayList<>();
+            for (Detection d : stones) {
+                float[] r = Perspective.applyHomography(H, d.cx, d.cy);
+                float gx = r[0] * (BOARD_SIZE - 1), gy = r[1] * (BOARD_SIZE - 1);
+                int col = Math.round(gx), row = Math.round(gy);
+                // 棋盘边缘(0 / BOARD-1)不含内部交叉点,不参与拟合
+                if (col <= 0 || col >= BOARD_SIZE - 1 || row <= 0 || row >= BOARD_SIZE - 1) continue;
+                float dx = gx - col, dy = gy - row;
+                if (Math.sqrt(dx * dx + dy * dy) > maxDev) continue; // 离群剔除
+                pairs.add(new float[]{d.cx, d.cy,
+                        col / (float) (BOARD_SIZE - 1), row / (float) (BOARD_SIZE - 1)});
+            }
+            if (pairs.size() < 4) {
+                log.append(String.format(" | 点对不足(%d),停止", pairs.size()));
+                break;
+            }
+            float[][] src = new float[pairs.size()][2];
+            float[][] dstP = new float[pairs.size()][2];
+            for (int i = 0; i < pairs.size(); i++) {
+                src[i][0] = pairs.get(i)[0];
+                src[i][1] = pairs.get(i)[1];
+                dstP[i][0] = pairs.get(i)[2];
+                dstP[i][1] = pairs.get(i)[3];
+            }
+            float[] Hn = Perspective.fitHomography(src, dstP, src.length);
+            if (Hn == null) {
+                log.append(" | 最小二乘失败,停止");
+                break;
+            }
+            // 四角漂移保护:精 H 折算四角若相对注入四角漂移超限 → 回退,防止外扩
+            float[] HnInv = Perspective.invertH(Hn);
+            if (HnInv != null) {
+                float maxDrift = 0f;
+                for (int i = 0; i < 4; i++) {
+                    float[] p = Perspective.applyHomography(HnInv, dst[i][0], dst[i][1]);
+                    maxDrift = Math.max(maxDrift,
+                            (float) Math.hypot(p[0] - anchor[i][0], p[1] - anchor[i][1]));
+                }
+                if (maxDrift > driftLimit) {
+                    log.append(String.format(" | 第%d轮四角漂移%.0fpx超限(≤%.0f),回退",
+                            iter + 1, maxDrift, driftLimit));
+                    break;
+                }
+            }
+            float dev = meanGridDev(stones, Hn);
+            log.append(String.format(" | 第%d轮: 点对%d 偏差%.3f", iter + 1, pairs.size(), dev));
+            if (dev > bestDev + 0.02f) {
+                log.append(" 未改善,回退");
+                break;
+            }
+            H = Hn;
+            if (Math.abs(dev - bestDev) < 0.005f) {
+                bestDev = dev;
+                log.append(" 收敛");
+                break;
+            }
+            bestDev = dev;
+        }
+        return H;
+    }
+
+    /** 棋子映射到网格的平均偏差(归一化格距)。 */
+    private static float meanGridDev(List<Detection> stones, float[] H) {
+        float sum = 0f;
+        int n = 0;
+        for (Detection d : stones) {
+            float[] r = Perspective.applyHomography(H, d.cx, d.cy);
+            float gx = r[0] * (BOARD_SIZE - 1), gy = r[1] * (BOARD_SIZE - 1);
+            float dx = gx - Math.round(gx), dy = gy - Math.round(gy);
+            sum += Math.sqrt(dx * dx + dy * dy);
+            n++;
+        }
+        return n > 0 ? sum / n : Float.MAX_VALUE;
     }
 
     /**
@@ -1958,6 +2205,9 @@ public class MokuRecognizer {
                 int ix = Math.round(imgPt[0]);
                 int iy = Math.round(imgPt[1]);
                 if (ix < pad || ix >= w - pad || iy < pad || iy >= h - pad) continue;
+                // 棋盘外无效区域过滤:反投影点必须落在 4 角四边形内。
+                // 网格若外扩/偏出棋盘,该点已在棋盘外(桌面/背景),严禁在此补子
+                if (!pointInQuad(ix, iy, corners)) continue;
 
                 // 与 verifyStonesColor 同逻辑判断黑/白
                 int judged = judgeStoneAt(ix, iy, stoneR, ringDist, w, h, pix, rs);
@@ -2014,6 +2264,9 @@ public class MokuRecognizer {
         if (bVals.size() < 6) return EMPTY;
         float boardLum = trimmedMean(bVals);
         float bgStd = stdDev(bVals, boardLum);
+        // 背景环一致性拦截:16 方向亮度离散异常大 → 环已跨过棋盘边界/落在背景杂物上,
+        // "中心 vs 环"对比不可信 → 拿不准就空,防棋盘外无效区域被补子(宁漏勿误)
+        if (bgStd > 34f) return EMPTY;
 
         // 3) 决策:阈值比 verifyStonesColor 更保守(宁漏不误检),由设置控制
         float boundary = Math.max(rs.boundaryBase, rs.boundaryK * bgStd);
@@ -2071,6 +2324,8 @@ public class MokuRecognizer {
         if (bVals.size() < 6) return new int[]{EMPTY, 0};
         float boardLum = trimmedMean(bVals);
         float bgStd = stdDev(bVals, boardLum);
+        // 背景环一致性拦截:环跨棋盘边界/落在背景杂物上时离散异常大,判定不可信
+        if (bgStd > 34f) return new int[]{EMPTY, 0};
 
         float boundary = Math.max(rs.boundaryBase, rs.boundaryK * bgStd);
         boundary = Math.max(boundary, rs.boundaryMin);
@@ -2143,6 +2398,8 @@ public class MokuRecognizer {
                 int cx = (int) Math.round(ip[0]);
                 int cy = (int) Math.round(ip[1]);
                 if (cx < 2 || cx >= w - 2 || cy < 2 || cy >= h - 2) continue;
+                // 棋盘外无效区域过滤:反投影点须在 4 角四边形内,防止网格外扩误补假子
+                if (!pointInQuad(cx, cy, corners)) continue;
 
                 int cur = board[r][c];
                 int[] j = judgeStoneConfident(cx, cy, (int) stoneR, (int) ringDist, w, h, pix, rs);
@@ -2169,6 +2426,22 @@ public class MokuRecognizer {
             Log.i(TAG, "全棋盘逐点复核: 改动 " + changed + " 格 (补 " + added + ", 修正误检 " + corrected + ")"
                     + sb);
         return changed;
+    }
+
+    /**
+     * 点是否在凸四边形(顺时针 TL→TR→BR→BL)内部。对每条边做叉积,须全在同侧。
+     * 用于过滤"棋盘外无效区域":网格外扩时反投影点落在棋盘外,严禁在那里补子。
+     */
+    private static boolean pointInQuad(float px, float py, float[][] q) {
+        boolean neg = false, pos = false;
+        for (int i = 0; i < 4; i++) {
+            float[] a = q[i], b = q[(i + 1) % 4];
+            float cross = (b[0] - a[0]) * (py - a[1]) - (b[1] - a[1]) * (px - a[0]);
+            if (cross > 1e-6f) pos = true;
+            else if (cross < -1e-6f) neg = true;
+            if (pos && neg) return false; // 落在边的两侧 → 四边形外
+        }
+        return true;
     }
 
     /** 求 3×3 矩阵的逆。退化返回 null。 */
