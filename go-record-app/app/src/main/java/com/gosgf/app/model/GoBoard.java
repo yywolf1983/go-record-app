@@ -24,8 +24,9 @@ public class GoBoard {
     private static final int MIN_HANDICAP = 1;
     private static final int MAX_HANDICAP = 9;
     private static final int MAX_TREE_DEPTH = 500;
-    private static final int BOARD_SIZE = 19;
+    public static final int DEFAULT_BOARD_SIZE = 19;
     private static final int SERIALIZE_VERSION = 1;
+    private int boardSize = DEFAULT_BOARD_SIZE;
 
     public static final int EMPTY = BoardLogic.EMPTY;
     public static final int BLACK  = BoardLogic.BLACK;
@@ -154,11 +155,18 @@ public class GoBoard {
     // ==================== 构造 ====================
 
     public GoBoard() {
+        this(DEFAULT_BOARD_SIZE);
+    }
+
+    public GoBoard(int size) {
+        this.boardSize = size;
         initializeBoard();
     }
 
+    public int getBoardSize() { return boardSize; }
+
     private void initializeBoard() {
-        board = new int[BOARD_SIZE][BOARD_SIZE];
+        board = new int[boardSize][boardSize];
         currentPlayer = BLACK;
         firstPlayer = BLACK;
         moveHistory = new ArrayList<>();
@@ -182,6 +190,11 @@ public class GoBoard {
     // ==================== 初始化 / 新局 ====================
 
     public void newGame() {
+        newGame(boardSize);
+    }
+
+    public void newGame(int size) {
+        this.boardSize = size;
         initializeBoard();
         gameTree.setRoot(new SGFNode(null));
         handicapMgr.applyHandicapStones();
@@ -197,7 +210,7 @@ public class GoBoard {
     public boolean placeStone(int x, int y) {
         if (x == -1 && y == -1) return placePassStone();
 
-        if (x < 0 || x >= BOARD_SIZE || y < 0 || y >= BOARD_SIZE) {
+        if (x < 0 || x >= boardSize || y < 0 || y >= boardSize) {
             lastErrorMessage = "位置超出棋盘范围";
             return false;
         }
@@ -273,7 +286,7 @@ public class GoBoard {
             return true;
         }
 
-        if (x < 0 || x >= BOARD_SIZE || y < 0 || y >= BOARD_SIZE) return false;
+        if (x < 0 || x >= boardSize || y < 0 || y >= boardSize) return false;
 
         int[][] tempBoard = BoardLogic.copyBoard(board);
         tempBoard[y][x] = currentPlayer;
@@ -974,6 +987,8 @@ public class GoBoard {
         BoardSerializer.DeserializeResult state = BoardSerializer.deserialize(s);
         if (state == null || !state.success) { newGame(); return; }
 
+        // 按存档尺寸同步 boardSize(版本 2+ 带 size, 旧存档默认 19)
+        this.boardSize = state.boardSize;
         board = state.board;
         currentPlayer = state.currentPlayer;
         moveHistory = state.moveHistory;

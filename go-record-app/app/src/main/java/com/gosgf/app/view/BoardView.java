@@ -19,8 +19,11 @@ import com.gosgf.app.model.GoBoard;
 import com.gosgf.app.model.GoBoard.Position;
 
 public class BoardView extends View {
-    private static final int BOARD_SIZE = 19;
     private static final int STAR_SIZE = 6; // 星位点大小，适当减小
+
+    private int boardSize() {
+        return board != null ? board.getBoardSize() : GoBoard.DEFAULT_BOARD_SIZE;
+    }
     
     private GoBoard board;
     private float cellSize;
@@ -219,6 +222,8 @@ public class BoardView extends View {
     // 棋盘尺寸锁定区间（dp），避免被容器撑大或挤小
     private static final int MAX_BOARD_DP = 460;
     private static final int MIN_BOARD_DP = 280;
+    /** 基础边距(dp)。margin 取 max(基础边距, min(w,h)/35)，保证边距对称、棋盘居中且最大化 */
+    private static final int BASE_MARGIN_DP = 16;
 
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
@@ -240,18 +245,26 @@ public class BoardView extends View {
     @Override
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
+        calculateLayout(w, h);
+    }
 
-        // 棋盘离屏幕边界一个棋子的距离：board(18格) + 左右各1个棋子(cellSize) = 20格
-        float cellSizeByWidth = (float)w / 20;
-        float cellSizeByHeight = (float)h / 20;
-        cellSize = Math.min(cellSizeByWidth, cellSizeByHeight);
-        
-        boardWidth = cellSize * 18;
-        boardHeight = cellSize * 18;
-        
-        // 棋盘四边与屏幕边界保持一个棋子的距离
-        marginLeft = (int)cellSize;
-        marginTop = (int)cellSize;
+    /** 根据棋盘大小动态重算布局(居中 + 最大化 + 对称边距)。
+     *  切棋盘大小、尺寸变化时都要调用。
+     *  要点: 四边预留 1.3*cellSize(=棋子半径cellSize/2 + 坐标区约cellSize*0.8 + 少许余量),
+     *        避免小棋盘 cellSize 变大后棋子越出屏幕或坐标重叠到棋子。 */
+    private void calculateLayout(int w, int h) {
+        if (w <= 0 || h <= 0) return;
+        int n = Math.max(2, boardSize());
+
+        // 边距按 cellSize 比例预留: 棋子半径 ≈ cellSize/2, 加上坐标区 cellSize*0.8
+        // 约束: cellSize * (N-1) + 2*1.3*cellSize <= min(w, h)
+        //   => cellSize <= min(w,h) / (N-1 + 2.6)
+        cellSize = Math.min((float)w / (n - 1 + 2.6f), (float)h / (n - 1 + 2.6f));
+        boardWidth = cellSize * (n - 1);
+        boardHeight = cellSize * (n - 1);
+        // 居中: 四边余量均分
+        marginLeft = (int) ((w - boardWidth) / 2);
+        marginTop = (int) ((h - boardHeight) / 2);
     }
 
     // 棋盘左边距
@@ -323,55 +336,75 @@ public class BoardView extends View {
     
     private void drawBoardLines(Canvas canvas) {
         // 绘制横线
-        for (int i = 0; i < BOARD_SIZE; i++) {
+        for (int i = 0; i < boardSize(); i++) {
             float y = marginTop + i * cellSize;
             canvas.drawLine(marginLeft, y, marginLeft + boardWidth, y, linePaint);
         }
 
         // 绘制竖线
-        for (int i = 0; i < BOARD_SIZE; i++) {
+        for (int i = 0; i < boardSize(); i++) {
             float x = marginLeft + i * cellSize;
             canvas.drawLine(x, marginTop, x, marginTop + boardHeight, linePaint);
         }
     }
     
-    private void drawStarPoints(Canvas canvas) {
-        // 星位点位置
-        int[] starPoints = {3, 9, 15};
-
-        for (int x : starPoints) {
-            for (int y : starPoints) {
-                float px = marginLeft + x * cellSize;
-                float py = marginTop + y * cellSize;
-                canvas.drawCircle(px, py, STAR_SIZE, starPaint);
-            }
+    /** 根据棋盘大小返回星位点位置。
+     *  9路: (2,2)(2,6)(4,4)(6,2)(6,6) — 4角+天元
+     *  13路: (3,3)(3,9)(6,6)(9,3)(9,9) — 4角+天元
+     *  19路: (3,3)(3,9)(3,15)(9,3)(9,9)(9,15)(15,3)(15,9)(15,15) — 标准9星
+     *  其他尺寸: 仅天元居中
+     */
+    private int[][] getStarPoints(int size) {
+        if (size == 9) {
+            return new int[][]{{2,2},{2,6},{4,4},{6,2},{6,6}};
+        } else if (size == 13) {
+            return new int[][]{{3,3},{3,9},{6,6},{9,3},{9,9}};
+        } else if (size == 19) {
+            return new int[][]{{3,3},{3,9},{3,15},{9,3},{9,9},{9,15},{15,3},{15,9},{15,15}};
+        } else {
+            int c = (size - 1) / 2;
+            return new int[][]{{c, c}};
         }
     }
 
-    private void drawCoordinates(Canvas canvas) {
-        String[] letters = {"A", "B", "C", "D", "E", "F", "G", "H", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T"};
-        String[] numbers = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19"};
+    private void drawStarPoints(Canvas canvas) {
+        int[][] pts = getStarPoints(boardSize());
+        for (int[] p : pts) {
+            float px = marginLeft + p[0] * cellSize;
+            float py = marginTop + p[1] * cellSize;
+            canvas.drawCircle(px, py, STAR_SIZE, starPaint);
+        }
+    }
 
+    /** 生成字母坐标(跳过 I, 标准围棋记谱 A..T 但跳过 I): A B C D E F G H J K L M N O P Q R S T */
+    private String getLetter(int idx) {
+        // A=0, 跳过 I(=8), 故 >=8 时 +1
+        int mapped = (idx >= 8) ? idx + 1 : idx;
+        return String.valueOf((char) ('A' + mapped));
+    }
+
+    private void drawCoordinates(Canvas canvas) {
+        int n = boardSize();
         Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         textPaint.setTextSize(cellSize * 0.45f);
         textPaint.setColor(0xFF5D4037);
 
-        float halfCell = cellSize * 0.5f; // 座标离棋盘半个座标的距离
+        float halfCell = cellSize * 0.5f;
 
-        // 底部字母：A-T
+        // 底部字母
         textPaint.setTextAlign(Paint.Align.CENTER);
-        for (int i = 0; i < BOARD_SIZE; i++) {
+        for (int i = 0; i < n; i++) {
             float x = marginLeft + i * cellSize;
             float y = marginTop + boardHeight + cellSize * 0.7f + textPaint.getTextSize() * 0.35f;
-            canvas.drawText(letters[i], x, y, textPaint);
+            canvas.drawText(getLetter(i), x, y, textPaint);
         }
 
-        // 右侧数字：1-19（从上到下）
+        // 右侧数字：从 1 到 n(从上到下)
         textPaint.setTextAlign(Paint.Align.LEFT);
-        for (int i = 0; i < BOARD_SIZE; i++) {
+        for (int i = 0; i < n; i++) {
             float x = marginLeft + boardWidth + halfCell;
             float y = marginTop + i * cellSize + textPaint.getTextSize() * 0.35f;
-            canvas.drawText(numbers[i], x, y, textPaint);
+            canvas.drawText(Integer.toString(n - i), x, y, textPaint);
         }
     }
 
@@ -399,8 +432,8 @@ public class BoardView extends View {
             }
         }
 
-        for (int y = 0; y < BOARD_SIZE; y++) {
-            for (int x = 0; x < BOARD_SIZE; x++) {
+        for (int y = 0; y < boardSize(); y++) {
+            for (int x = 0; x < boardSize(); x++) {
                 int stone = boardState[y][x];
                 if (stone != GoBoard.EMPTY) {
                     float px = marginLeft + x * cellSize;
@@ -824,7 +857,7 @@ public class BoardView extends View {
             int boardY = (int) ((y - marginTop + cellSize / 2) / cellSize);
 
             // 检查坐标是否在棋盘范围内
-            if (boardX >= 0 && boardX < BOARD_SIZE && boardY >= 0 && boardY < BOARD_SIZE) {
+            if (boardX >= 0 && boardX < boardSize() && boardY >= 0 && boardY < boardSize()) {
                 touchDownTime = System.currentTimeMillis();
                 touchDownX = boardX;
                 touchDownY = boardY;
@@ -952,7 +985,7 @@ public class BoardView extends View {
         int boardX = (int) ((x - marginLeft + cellSize / 2) / cellSize);
         int boardY = (int) ((y - marginTop + cellSize / 2) / cellSize);
 
-        if (boardX >= 0 && boardX < BOARD_SIZE && boardY >= 0 && boardY < BOARD_SIZE) {
+        if (boardX >= 0 && boardX < boardSize() && boardY >= 0 && boardY < boardSize()) {
             return new int[]{boardX, boardY};
         }
         return null;
@@ -1018,8 +1051,9 @@ public class BoardView extends View {
         }
     }
 
-    // 重绘棋盘
+    // 重绘棋盘: 切棋盘大小等场景下先重算布局, 保证居中最大化
     public void refresh() {
+        calculateLayout(getWidth(), getHeight());
         invalidate();
     }
 }

@@ -145,6 +145,9 @@ import java.util.Locale;
             getSupportActionBar().hide();
         }
 
+        // 读取默认棋盘大小(用户可通过长按"新建"修改)
+        int defaultSize = getPreferences(Context.MODE_PRIVATE).getInt("default_board_size", GoBoard.DEFAULT_BOARD_SIZE);
+
         // 尝试从保存的状态恢复棋局
         if (savedInstanceState != null) {
             String savedBoardState = savedInstanceState.getString("board_state", null);
@@ -152,7 +155,7 @@ import java.util.Locale;
                 board = new GoBoard();
                 board.deserialize(savedBoardState);
             } else {
-                board = new GoBoard();
+                board = new GoBoard(defaultSize);
             }
         } else {
             // 尝试从SharedPreferences恢复上次的棋局
@@ -161,7 +164,7 @@ import java.util.Locale;
                 board = new GoBoard();
                 board.deserialize(savedState);
             } else {
-                board = new GoBoard();
+                board = new GoBoard(defaultSize);
             }
         }
 
@@ -428,7 +431,8 @@ import java.util.Locale;
         );
 
         // 设置点击监听器
-        btnNew.setOnClickListener(v -> onNewGame());
+        btnNew.setOnClickListener(v -> onNewGame(getPreferences(Context.MODE_PRIVATE).getInt("default_board_size", GoBoard.DEFAULT_BOARD_SIZE)));
+        btnNew.setOnLongClickListener(v -> { showBoardSizePicker(); return true; });
         btnLoad.setOnClickListener(v -> onLoadGame());
         btnSave.setOnClickListener(v -> onSaveGame());
 
@@ -782,11 +786,95 @@ import java.util.Locale;
     }
 
     private void onNewGame() {
-        board.newGame();
+        onNewGame(board.getBoardSize());
+    }
+
+    private void onNewGame(int size) {
+        if (size <= 0) size = GoBoard.DEFAULT_BOARD_SIZE;
+        // 若尺寸变化, 需要重新构造 GoBoard 并绑定到 boardView
+        if (board == null || board.getBoardSize() != size) {
+            board = new GoBoard(size);
+            boardView.setBoard(board);
+            boardView.setOnBoardTouchListener(this::onBoardTouch);
+            if (branchSelectListener != null) boardView.setOnBranchSelectListener(branchSelectListener);
+            if (branchDeleteListener != null) boardView.setOnBranchDeleteListener(branchDeleteListener);
+            if (markPlaceListener != null) boardView.setOnMarkPlaceListener(markPlaceListener);
+        }
+        board.newGame(size);
+        // 同步 KataGo 设置中的贴目(棋盘新建会重置 komi)
+        board.setKomi((float) Double.parseDouble(katagoPrefs.getString(PREF_KOMI, "7.5")));
         boardView.refresh();
         updateCommentDisplay();
         // 清除保存的游戏状态
         clearSavedGameState();
+    }
+
+    /** 长按新建：弹出棋盘大小选择(9/13/19 + 自定义)，选择后保存并立即开新局。
+     *  自定义允许输入 2~25 路的任意整数。 */
+    private void showBoardSizePicker() {
+        final int[] presets = {9, 13, 19};
+        final String[] presetLabels = {"9 路(小棋盘)", "13 路(中棋盘)", "19 路(标准)", "自定义…"};
+        int currentSize = board != null ? board.getBoardSize() : GoBoard.DEFAULT_BOARD_SIZE;
+        int checked = 2;
+        for (int i = 0; i < presets.length; i++) if (presets[i] == currentSize) checked = i;
+        final int[] selected = {checked};
+
+        androidx.appcompat.app.AlertDialog.Builder b = new androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("选择棋盘大小")
+            .setSingleChoiceItems(presetLabels, checked, (d, w) -> {
+                selected[0] = w;
+                if (w == presets.length) {
+                    // 用户点了"自定义…", 立刻关单选框弹输入框
+                    d.dismiss();
+                    showCustomBoardSizeInput();
+                }
+            })
+            .setPositiveButton("确定", (d, w) -> {
+                if (selected[0] < presets.length) {
+                    int newSize = presets[selected[0]];
+                    applyNewBoardSize(newSize);
+                }
+            })
+            .setNegativeButton("取消", null);
+        b.show();
+    }
+
+    private static final int MIN_CUSTOM_SIZE = 2;
+    private static final int MAX_CUSTOM_SIZE = 25;
+
+    /** 自定义路数输入框，合法范围 2~25 */
+    private void showCustomBoardSizeInput() {
+        final android.widget.EditText input = new android.widget.EditText(this);
+        input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        input.setHint(String.format("输入 %d~%d 之间的整数", MIN_CUSTOM_SIZE, MAX_CUSTOM_SIZE));
+        int currentSize = board != null ? board.getBoardSize() : GoBoard.DEFAULT_BOARD_SIZE;
+        input.setText(Integer.toString(currentSize));
+        input.selectAll();
+
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("自定义棋盘路数")
+            .setView(input)
+            .setPositiveButton("确定", (d, w) -> {
+                String txt = input.getText() == null ? "" : input.getText().toString().trim();
+                try {
+                    int n = Integer.parseInt(txt);
+                    if (n < MIN_CUSTOM_SIZE || n > MAX_CUSTOM_SIZE) {
+                        Toast.makeText(this, "范围 " + MIN_CUSTOM_SIZE + "~" + MAX_CUSTOM_SIZE, Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    applyNewBoardSize(n);
+                } catch (NumberFormatException e) {
+                    Toast.makeText(this, "请输入合法整数", Toast.LENGTH_SHORT).show();
+                }
+            })
+            .setNegativeButton("取消", null)
+            .show();
+    }
+
+    private void applyNewBoardSize(int newSize) {
+        getPreferences(Context.MODE_PRIVATE).edit().putInt("default_board_size", newSize).apply();
+        onNewGame(newSize);
+        Toast.makeText(this, "已切换到 " + newSize + " 路棋盘", Toast.LENGTH_SHORT).show();
     }
 
     /** 以引擎计算结果为准，拼接“胜率/优子”后缀到步数行末（相对当前行棋方）。

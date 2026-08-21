@@ -8,11 +8,15 @@ import java.util.List;
  */
 public class BoardSerializer {
 
-    private static final int BOARD_SIZE = 19;
-    private static final int SERIALIZE_VERSION = 1;
+    /** 版本历史:
+     *  0: 无版本号, 旧格式, 固定 19 路
+     *  1: 版本号在前, 固定 19 路, 12 字段
+     *  2: 版本号后加 boardSize 字段(13 字段), 棋盘数据按实际 size 读写 (2026-08) */
+    private static final int SERIALIZE_VERSION = 2;
+    private static final int FALLBACK_SIZE = 19;
 
     /**
-     * 序列化棋局状态
+     * 序列化棋局状态。board 的行长按 board.length 决定棋盘大小。
      */
     public static String serialize(
             int[][] board,
@@ -29,13 +33,16 @@ public class BoardSerializer {
             String gameTreeBlob) {
 
         StringBuilder sb = new StringBuilder();
+        int size = (board != null && board.length > 0) ? board.length : FALLBACK_SIZE;
 
         // 版本号
         sb.append(SERIALIZE_VERSION).append("|");
+        // 版本 2+: 棋盘大小
+        sb.append(size).append("|");
 
-        // 棋盘状态
-        for (int y = 0; y < BOARD_SIZE; y++) {
-            for (int x = 0; x < BOARD_SIZE; x++) {
+        // 棋盘状态: 按实际 size 写入
+        for (int y = 0; y < size; y++) {
+            for (int x = 0; x < size; x++) {
                 sb.append(board[y][x]);
             }
         }
@@ -105,6 +112,7 @@ public class BoardSerializer {
      */
     public static class DeserializeResult {
         public int[][] board;
+        public int boardSize = FALLBACK_SIZE;
         public int currentPlayer;
         public int currentStep = 0;
         public String gameTreeBlob = "";   // 完整游戏树片段（可能为空=旧格式）
@@ -144,18 +152,30 @@ public class BoardSerializer {
             offset = 0;
         }
 
+        // 版本 2: 版本号后是 boardSize
+        int size = FALLBACK_SIZE;
+        if (version >= 2) {
+            if (parts.length < offset + 1) return result;
+            try {
+                size = Integer.parseInt(parts[offset]);
+            } catch (NumberFormatException e) { size = FALLBACK_SIZE; }
+            if (size < 2) size = FALLBACK_SIZE;
+            offset++;
+        }
+        result.boardSize = size;
+
         int requiredParts = offset + 12;
         if (parts.length < requiredParts) return result;
 
         try {
-            result.board = new int[BOARD_SIZE][BOARD_SIZE];
+            result.board = new int[size][size];
 
             // 棋盘状态
             String boardStr = parts[offset];
-            if (boardStr.length() == BOARD_SIZE * BOARD_SIZE) {
-                for (int y = 0; y < BOARD_SIZE; y++) {
-                    for (int x = 0; x < BOARD_SIZE; x++) {
-                        int idx = y * BOARD_SIZE + x;
+            if (boardStr.length() == size * size) {
+                for (int y = 0; y < size; y++) {
+                    for (int x = 0; x < size; x++) {
+                        int idx = y * size + x;
                         result.board[y][x] = Character.getNumericValue(boardStr.charAt(idx));
                     }
                 }
