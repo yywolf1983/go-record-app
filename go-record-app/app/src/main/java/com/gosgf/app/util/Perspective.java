@@ -1,5 +1,7 @@
 package com.gosgf.app.util;
 
+import android.graphics.Bitmap;
+
 /**
  * 透视变换数学工具：4 点单应性矩阵 + 应用 + 3x3 矩阵求逆。
  * 1:1 移植自 Kaya 项目 packages/board-recognition/src/perspective.ts，
@@ -180,5 +182,65 @@ public final class Perspective {
                 C[i][j] = s;
             }
         return C;
+    }
+
+    /**
+     * 透视拉正裁剪:把原图中 quad 四边形(TL→TR→BR→BL)围住的棋盘区域
+     * 重采样成 outSize×outSize 正方形位图,四边形外的背景完全丢弃。
+     * 对目标每个像素用 dst→src 单应性映射回原图,双线性插值;越界取最近有效像素(避免黑缝)。
+     *
+     * @param quad 原图像素坐标 4 角,顺序 TL→TR→BR→BL
+     * @return 拉正后的正方形位图;参数非法/单应性奇异时返回 null
+     */
+    public static Bitmap warpQuad(Bitmap src, float[][] quad, int outSize) {
+        if (src == null || quad == null || quad.length < 4) return null;
+        int S = outSize;
+        // 目标正方形四角 TL→TR→BR→BL(与 quad 同序)
+        float[][] dst = new float[][]{
+                {0f, 0f}, {S - 1f, 0f}, {S - 1f, S - 1f}, {0f, S - 1f}};
+        float[] hDst2Src = computeHomography(dst, quad);
+        if (hDst2Src == null) return null;
+
+        int srcW = src.getWidth(), srcH = src.getHeight();
+        int[] srcPixels = new int[srcW * srcH];
+        src.getPixels(srcPixels, 0, srcW, 0, 0, srcW, srcH);
+
+        Bitmap out = Bitmap.createBitmap(S, S, Bitmap.Config.ARGB_8888);
+        int[] row = new int[S];
+        for (int y = 0; y < S; y++) {
+            for (int x = 0; x < S; x++) {
+                float[] p = applyHomography(hDst2Src, x, y);
+                float sx = p[0], sy = p[1];
+                // 越界(角点定位误差范围)→ 最近有效像素,避免棋盘边缘黑缝
+                float fsx = Math.max(0f, Math.min(sx, srcW - 1f));
+                float fsy = Math.max(0f, Math.min(sy, srcH - 1f));
+                int ix = (int) fsx, iy = (int) fsy;
+                int x0 = Math.min(ix, srcW - 1), y0 = Math.min(iy, srcH - 1);
+                int x1 = Math.min(x0 + 1, srcW - 1), y1 = Math.min(y0 + 1, srcH - 1);
+                float fx = fsx - x0, fy = fsy - y0;
+                int c00 = srcPixels[y0 * srcW + x0];
+                int c10 = srcPixels[y0 * srcW + x1];
+                int c01 = srcPixels[y1 * srcW + x0];
+                int c11 = srcPixels[y1 * srcW + x1];
+                row[x] = bilinear(c00, c10, c01, c11, fx, fy);
+            }
+            out.setPixels(row, 0, S, 0, y, S, 1);
+        }
+        return out;
+    }
+
+    /** 4 像素双线性插值(ARGB 各通道独立)。 */
+    private static int bilinear(int c00, int c10, int c01, int c11, float fx, float fy) {
+        float w00 = (1 - fx) * (1 - fy), w10 = fx * (1 - fy);
+        float w01 = (1 - fx) * fy, w11 = fx * fy;
+        int a = (int) (w00 * ((c00 >>> 24) & 0xFF) + w10 * ((c10 >>> 24) & 0xFF)
+                + w01 * ((c01 >>> 24) & 0xFF) + w11 * ((c11 >>> 24) & 0xFF));
+        int r = (int) (w00 * ((c00 >> 16) & 0xFF) + w10 * ((c10 >> 16) & 0xFF)
+                + w01 * ((c01 >> 16) & 0xFF) + w11 * ((c11 >> 16) & 0xFF));
+        int g = (int) (w00 * ((c00 >> 8) & 0xFF) + w10 * ((c10 >> 8) & 0xFF)
+                + w01 * ((c01 >> 8) & 0xFF) + w11 * ((c11 >> 8) & 0xFF));
+        int b = (int) (w00 * (c00 & 0xFF) + w10 * (c10 & 0xFF)
+                + w01 * (c01 & 0xFF) + w11 * (c11 & 0xFF));
+        return (a << 24) | (r << 16) | (g << 8) | b;
     }
 }

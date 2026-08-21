@@ -12,14 +12,21 @@ import java.util.Map;
 import java.util.Set;
 
 import ai.onnxruntime.OnnxTensor;
+import ai.onnxruntime.OnnxValue;
 import ai.onnxruntime.OrtEnvironment;
 import ai.onnxruntime.OrtSession;
 
 /**
- * Moku 围棋棋盘识别器：基于 kaya-go/moku-v3 RT-DETR ONNX 模型。
+ * Moku 围棋棋盘识别器：支持 RT-DETR 与 YOLOv8 两种 ONNX 检测模型。
  *
  * 算法 1:1 移植自 Kaya 项目 packages/board-recognition/src/{moku-detector,moku-postprocess,
  * perspective,corners}.ts，全部纯 Java 实现，不依赖 OpenCV。
+ *
+ * 模型自动识别（运行时按输出名/形状分流）：
+ *   - RT-DETR (moku-v3): 输入 pixel_values, 双输出 logits + pred_boxes, 300 query
+ *   - YOLOv8: 输入 images(动态获取), 单输出 [1,C,N] 或 [1,N,C], C=4+nc,
+ *     由 decodeYolov8 转成与 RT-DETR 相同的 query-major 布局, 下游逻辑完全复用。
+ *     类别顺序约定与训练一致: 0=黑子, 1=白子, 2=棋盘角点。
  *
  * 流程：
  *   Bitmap → 预处理(双线性 resize 到 640×640, /255 归一化) → ONNX 推理
@@ -40,15 +47,17 @@ public class MokuRecognizer {
     public static final int CLASS_BLACK_STONE = 0;
     public static final int CLASS_WHITE_STONE = 1;
     public static final int CLASS_BOARD_CORNER = 2;
-    public static final float DEFAULT_THRESHOLD = 0.150f;
+    public static final float DEFAULT_THRESHOLD = 0.035f;  // 略低于 Kaya 默认 0.05, 召回更多临界棋子
     // 全空重试阈值:高阈值漏检(一个棋子都没识别到)时,用较低阈值重跑一次保召回
     // (低阈值可能引入少量误检,但相比"完全识别不到"更可接受,且用户可手动摆子修正)
-    private static final float LOW_RETRY_THRESHOLD = 0.050f;
+    private static final float LOW_RETRY_THRESHOLD = 0.015f;
     // 类别感知阈值:黑棋对比度通常更高,可用略高阈值过滤误检;
     // 白棋在木色棋盘上对比度较低,维持较低阈值保证召回
-    private static final float BLACK_STONE_THRESHOLD_BIAS = +0.003f;
-    private static final float WHITE_STONE_THRESHOLD_BIAS = -0.020f;
+    // 注: 早期曾用黑白类别感知阈值(黑 +0.003 / 白 -0.020), 与 Kaya 不一致, 已移除
     private static final float CORNER_MIN_THRESHOLD = 0.005f;
+    // YOLOv8 输出候选保留阈值:8400 个 anchor 大量低分,转换时先按此过滤,
+    // 避免下游 WBF O(n²) 在噪声上退化。此阈值只做粗过滤,细过滤仍由类别感知阈值完成
+    private static final float YOLO_KEEP_MIN = 0.002f;
     // WBF (Weighted Boxes Fusion) 参数:替代 NMS,对 TTA 多通道检测框加权平均
     private static final float WBF_IOU_THRESHOLD = 0.55f;
     private static final int BOARD_SIZE = 19;
@@ -68,6 +77,8 @@ public class MokuRecognizer {
     public static class RecognitionResult {
         public int[][] board;          // [BOARD_SIZE][BOARD_SIZE], 0=空/1=黑/2=白
         public boolean cornersDetected;
+        /** 模型实际检测到的棋盘角点数(去重后), 用于裁剪交叉校验等可信度判断。 */
+        public int cornerCount;
         public int blackCount;
         public int whiteCount;
         public String message;
@@ -137,11 +148,13 @@ public class MokuRecognizer {
     }
 
     /**
-     * @param alreadyCropped true 表示传入图已经是"棋盘区域"(用户手动裁剪/系统裁剪得到),
-     *                       此时跳过阶段 2 的"按检测棋子自动再裁剪"——因为该步骤基于模型检测到的
-     *                       棋子算 bbox,若边角未被检测到,会自动裁剪框会比真实棋盘小,反而把
-     *                       最外圈交叉点切到图外导致边角缺失。手动裁剪图直接用整图 TTA 识别即可,
-     *                       棋盘四边都在图内,边角更完整。
+     * 完全参照 Kaya moku-detector.detect(): 单次推理 → postprocess。
+     * 不做两阶段自动裁剪、不做 TTA 多路融合 —— 与 Kaya 桌面端/Web 端识别路径一致,
+     * 避免裁剪误判/多路融合引入的整盘错误。
+     *
+     * @param alreadyCropped 兼容参数(手动裁剪图)。识别流程与未裁剪完全一致:
+     *                       Kaya 对任何输入图统一走 preprocess → inference → postprocess,
+     *                       裁剪只影响输入图本身,不改变识别逻辑。
      */
     public RecognitionResult recognize(Bitmap bitmap, float threshold,
                                         boolean alreadyCropped) throws Exception {
@@ -162,12 +175,10 @@ public class MokuRecognizer {
 
         int srcW = bitmap.getWidth();
         int srcH = bitmap.getHeight();
-        Log.i(TAG, "=== 识别开始 === src=" + srcW + "x" + srcH
+        Log.i(TAG, "=== 识别开始(kaya 单次推理流程) === src=" + srcW + "x" + srcH
                 + ", threshold=" + threshold);
 
-        // 内存保护:仅在尺寸极大时轻度缩放,避免 OOM。
-        // 注意:这不是识别压缩——识别精度靠"按棋盘区域自动裁剪"保证,
-        // 预缩放仅用于让阶段1的 bbox 检测能在合理分辨率上进行。
+        // 内存保护:仅在尺寸极大时轻度缩放,避免 OOM(与识别逻辑无关)
         final int MAX_DIM = 2560;
         if (Math.max(srcW, srcH) > MAX_DIM) {
             float ds = (float) MAX_DIM / Math.max(srcW, srcH);
@@ -179,84 +190,21 @@ public class MokuRecognizer {
             Log.d(TAG, "大图内存保护缩放: → " + srcW + "x" + srcH);
         }
 
-        // 图像增强:对比度拉伸,改善光照不均/低对比度
-        bitmap = enhanceContrast(bitmap);
-        srcW = bitmap.getWidth();
-        srcH = bitmap.getHeight();
+        // 非正方形图不做裁剪 — 居中裁剪会丢失棋盘边缘信息导致整体偏移。
+        // 改为 letterbox: preprocess 内部统一缩放 + 灰色填充到 640×640,
+        // 保持完整图像不变形, 棋盘位置信息完整保留。
 
-        // === 阶段 1: 粗推理, 用棋子 bbox 自动定位棋盘 ===
+        // preprocess(拉伸 640, /255) → inference → postprocess, 与 Kaya moku-detector.detect 一致
         long t1 = System.currentTimeMillis();
-        PreprocessResult pp1 = preprocess(bitmap, srcW, srcH);
-        float[][] out1 = runInference(pp1.input);
-        Log.d(TAG, "阶段 1 推理耗时" + (System.currentTimeMillis() - t1) + "ms"
-                + String.format(", letterbox: scale=%.3f pad=(%d,%d) new=%dx%d",
-                        pp1.lb.scale, pp1.lb.padX, pp1.lb.padY, pp1.lb.newW, pp1.lb.newH));
+        PreprocessResult pp = preprocess(bitmap, srcW, srcH);
+        float[][] out = runInference(pp.input);
+        Log.d(TAG, "推理耗时" + (System.currentTimeMillis() - t1) + "ms"
+                + String.format(", 拉伸: scaleX=%.3f scaleY=%.3f new=%dx%d",
+                        pp.lb.scaleX, pp.lb.scaleY, pp.lb.newW, pp.lb.newH));
 
-        // 计算棋子 bbox (粗略, 只用于裁剪定位) - 用 letterbox 坐标映射
-        float[] bbox = computeStonesBBox(out1[0], out1[1], srcW, srcH, threshold, pp1.lb);
-
-        // 手动裁剪的图:已经是棋盘区域,直接整图 TTA 识别,跳过阶段 2 自动再裁剪。
-        // (阶段 2 的"按检测棋子自动再裁剪"会把未被检测到的边角切掉 → 边角缺失)
-        if (alreadyCropped) {
-            Log.i(TAG, "手动裁剪图:跳过阶段2自动再裁剪, 直接整图 TTA 识别(保边角)");
-            RecognitionResult rr = postprocessWithTTA(out1, bitmap, pp1, srcW, srcH, threshold,
-                    true, rs);
-            return maybeRetry(rawBitmap, rr, threshold, rs, null);
-        }
-
-        // 棋子 bbox 覆盖范围足够小 (棋盘只占图像一部分) → 自动裁剪 + 重新推理
-        // 否则直接用阶段 1 结果做完整后处理
-        if (bbox == null) {
-            Log.i(TAG, "阶段 1 未检测到棋子, 直接后处理+TTA");
-            RecognitionResult r1 = postprocessWithTTA(out1, bitmap, pp1, srcW, srcH, threshold, rs);
-            return maybeRetry(rawBitmap, r1, threshold, rs, null);
-        }
-
-        float minX = bbox[0], minY = bbox[1], maxX = bbox[2], maxY = bbox[3];
-        float bw = maxX - minX, bh = maxY - minY;
-        float bboxArea = bw * bh;
-        float imgArea = srcW * srcH;
-        float coverage = bboxArea / imgArea;
-        Log.i(TAG, String.format("阶段 1 棋子 bbox: (%.0f,%.0f)-(%.0f,%.0f) 覆盖=%.1f%%",
-                minX, minY, maxX, maxY, coverage * 100));
-
-        // 始终按棋盘 bbox 自动裁剪(而不是把整图折叠压缩成正方形再识别):
-        // 满屏/竖图拍的棋盘若直接 letterbox 到 640 会被横向压缩变形,
-        // 因此无论覆盖率多少,只要定位到棋盘就裁剪出棋盘区域再做精细识别。
-        // 多棋子占不满整图(带桌面背景)时裁剪掉背景,棋盘在 640 里占比更大、更清晰。
-
-        // === 阶段 2: 用 bbox 裁剪原图 + 重新推理 (类似手动裁剪, 但全自动) ===
-        float pad = Math.max(bw, bh) / 18f * 5f;  // 外扩约 5 个格子,确保边角棋子不被裁掉
-        int cropX = Math.max(0, (int) (minX - pad));
-        int cropY = Math.max(0, (int) (minY - pad));
-        int cropRight = Math.min(srcW, (int) (maxX + pad));
-        int cropBottom = Math.min(srcH, (int) (maxY + pad));
-        int cropW = cropRight - cropX;
-        int cropH = cropBottom - cropY;
-
-        // 退化保护:bbox 误检导致裁剪尺寸过小(≤0)时,回退到整图识别,避免崩溃
-        if (cropW <= 0 || cropH <= 0 || cropW * cropH < (srcW * srcH) / 100) {
-            Log.w(TAG, "棋盘 bbox 退化(裁剪尺寸 " + cropW + "x" + cropH
-                    + "), 回退整图识别");
-            return postprocessWithTTA(out1, bitmap, pp1, srcW, srcH, threshold, rs);
-        }
-
-        Log.i(TAG, "自动裁剪: pad=" + pad + " → 区域(" + cropX + "," + cropY + ")-("
-                + cropRight + "," + cropBottom + ") 尺寸" + cropW + "x" + cropH);
-
-        Bitmap cropped = Bitmap.createBitmap(bitmap, cropX, cropY, cropW, cropH);
-
-        long t2 = System.currentTimeMillis();
-        PreprocessResult pp2 = preprocess(cropped, cropW, cropH);
-        float[][] out2 = runInference(pp2.input);
-        Log.d(TAG, "阶段 2 推理耗时" + (System.currentTimeMillis() - t2) + "ms"
-                + " (裁剪后 " + cropW + "x" + cropH + ")"
-                + String.format(", letterbox: scale=%.3f pad=(%d,%d)",
-                        pp2.lb.scale, pp2.lb.padX, pp2.lb.padY));
-
-        RecognitionResult result = postprocessWithTTA(out2, cropped, pp2, cropW, cropH, threshold, rs);
-        Log.i(TAG, "两阶段识别完成 (自动裁剪 " + cropW + "x" + cropH + " + TTA)");
-        return maybeRetry(rawBitmap, result, threshold, rs, null);
+        RecognitionResult rr = postprocessWithTTA(out, bitmap, pp, srcW, srcH, threshold,
+                false, rs);
+        return maybeRetry(rawBitmap, rr, threshold, rs, null);
     }
 
     /**
@@ -291,11 +239,6 @@ public class MokuRecognizer {
             scale = ds;
             Log.d(TAG, "大图内存保护缩放: → " + srcW + "x" + srcH);
         }
-
-        // 图像增强:对比度拉伸(不改尺寸),改善光照不均/低对比度
-        bitmap = enhanceContrast(bitmap);
-        srcW = bitmap.getWidth();
-        srcH = bitmap.getHeight();
 
         // 把用户角点映射到(可能被缩放的)识别图坐标系
         float[][] scaledCorners = new float[4][2];
@@ -426,27 +369,126 @@ public class MokuRecognizer {
         return result;
     }
 
-    /** 单次 ONNX 推理,返回 [logits, predBoxes]。 */
+    /** 单次 ONNX 推理,返回 [logits, predBoxes] (RT-DETR 兼容的 query-major 布局)。
+     *  支持两种模型架构:
+     *   - RT-DETR (moku-v3): 双输出 logits + pred_boxes, 300 query
+     *   - YOLOv8: 单输出 [1,C,N] 或 [1,N,C], C=4+nc, 由 decodeYolov8 转成 query 布局 */
     private float[][] runInference(float[] input) throws Exception {
         long[] shape = {1L, 3L, (long) INPUT_SIZE, (long) INPUT_SIZE};
         java.nio.FloatBuffer inputBuf = java.nio.FloatBuffer.wrap(input);
         OnnxTensor inputTensor = OnnxTensor.createTensor(env, inputBuf, shape);
         try {
             Map<String, OnnxTensor> feeds = new HashMap<>();
-            feeds.put("pixel_values", inputTensor);
+            feeds.put(getInputName(), inputTensor);
             try (OrtSession.Result result = session.run(feeds)) {
-                Object logitsVal = result.get("logits").get().getValue();
-                Object boxesVal = result.get("pred_boxes").get().getValue();
-                float[] logits = flattenFloatArray(logitsVal, NUM_QUERIES * NUM_CLASSES);
-                float[] predBoxes = flattenFloatArray(boxesVal, NUM_QUERIES * 4);
-                Log.d(TAG, "ONNX 推理: logits=" + logitsVal.getClass().getSimpleName()
-                        + "→len=" + logits.length + ", predBoxes=" + boxesVal.getClass().getSimpleName()
-                        + "→len=" + predBoxes.length);
-                return new float[][]{logits, predBoxes};
+                Set<String> outNames = session.getOutputNames();
+                if (outNames.contains("logits") && outNames.contains("pred_boxes")) {
+                    // RT-DETR: 双输出
+                    Object logitsVal = result.get("logits").get().getValue();
+                    Object boxesVal = result.get("pred_boxes").get().getValue();
+                    float[] logits = flattenFloatArray(logitsVal, NUM_QUERIES * NUM_CLASSES);
+                    float[] predBoxes = flattenFloatArray(boxesVal, NUM_QUERIES * 4);
+                    Log.d(TAG, "RT-DETR 推理: " + logitsVal.getClass().getSimpleName()
+                            + "→len=" + logits.length + ", " + boxesVal.getClass().getSimpleName()
+                            + "→len=" + predBoxes.length);
+                    return new float[][]{logits, predBoxes};
+                }
+                // YOLOv8: 单输出, 转成 RT-DETR 兼容 query 布局
+                String outName = outNames.iterator().next();
+                OnnxValue ov = result.get(outName).get();
+                long[] outShape = ((OnnxTensor) ov).getInfo().getShape();
+                float[] raw = flattenFloatArray(ov.getValue(), (int) totalLen(outShape));
+                float[][] det = decodeYolov8(raw, outShape);
+                if (det == null) {
+                    throw new IllegalStateException("YOLOv8 输出解析失败: shape="
+                            + java.util.Arrays.toString(outShape));
+                }
+                Log.i(TAG, "YOLOv8 推理: shape=" + java.util.Arrays.toString(outShape)
+                        + " → " + (det[0].length / NUM_CLASSES) + " query");
+                return det;
             }
         } finally {
             inputTensor.close();
         }
+    }
+
+    /** 当前模型的输入名(RT-DETR 为 pixel_values, YOLOv8 通常为 images),动态获取避免硬编码。 */
+    private String getInputName() {
+        return session.getInputNames().iterator().next();
+    }
+
+    private static long totalLen(long[] shape) {
+        long t = 1;
+        for (long s : shape) t *= s;
+        return t;
+    }
+
+    /**
+     * 把 YOLOv8 单输出解码为 RT-DETR 兼容的 query-major logits/boxes。
+     * YOLOv8 输出布局: [1, C, N] (channels-first, 官方导出默认) 或 [1, N, C],
+     *   - 前 4 通道: cx, cy, w, h —— letterbox 后输入图内的像素坐标
+     *   - 后 nc 通道: 各类别分数 (ultralytics 导出默认已含 sigmoid)
+     * 转换规则:
+     *   - 每个 anchor 求 argmax 类别与分数, 分数 < YOLO_KEEP_MIN 直接丢弃
+     *     (8400 anchor 大量低分, 丢弃避免下游 WBF O(n²) 在噪声上退化)
+     *   - logits 只填 argmax 类为 logit = ln(p/(1-p)), 其余填 -100,
+     *     使下游 sigmoid(logit) == p 且 argmax 保持一致 (下游复用 RT-DETR 解码)
+     *   - boxes 归一化到 [0,1] (除以 INPUT_SIZE), 与 RT-DETR pred_boxes 一致,
+     *     TTA 镜像(1-cx)与 letterbox 逆映射全部复用
+     */
+    private static float[][] decodeYolov8(float[] raw, long[] shape) {
+        if (shape.length < 3) return null;
+        long d1 = shape[1], d2 = shape[2];
+        if (d1 <= 0 || d2 <= 0) return null;
+        // 判定布局: 通道维 C = 4 + nc。channels-first [1,C,N] 时 C 较小(7~64)而 N 大(8400)
+        boolean colMajor; // true = [1,C,N] (通道在前)
+        int C, N;
+        if (d1 >= 5 && d1 <= 64 && d2 > d1) { C = (int) d1; N = (int) d2; colMajor = true; }
+        else if (d2 >= 5 && d2 <= 64 && d1 > d2) { C = (int) d2; N = (int) d1; colMajor = false; }
+        else return null;
+        int nc = C - 4;
+        if (nc < 1) return null;
+        if (raw.length < C * N) return null;
+        // 探测是否已 sigmoid: 采样若干 class 分数, 出现绝对值 >1.01 则需 sigmoid
+        boolean needsSigmoid = false;
+        outer:
+        for (int k = 0; k < Math.min(N, 300); k++) {
+            for (int c = 0; c < nc; c++) {
+                float v = colMajor ? raw[c * N + k] : raw[k * C + 4 + c];
+                if (v > 1.01f || v < -0.01f) { needsSigmoid = true; break outer; }
+            }
+        }
+        List<Float> l = new ArrayList<>();
+        List<Float> b = new ArrayList<>();
+        for (int k = 0; k < N; k++) {
+            float cx = colMajor ? raw[0 * N + k] : raw[k * C];
+            float cy = colMajor ? raw[1 * N + k] : raw[k * C + 1];
+            float w  = colMajor ? raw[2 * N + k] : raw[k * C + 2];
+            float h  = colMajor ? raw[3 * N + k] : raw[k * C + 3];
+            float best = -1f; int bestC = -1;
+            for (int c = 0; c < nc; c++) {
+                float s = colMajor ? raw[(4 + c) * N + k] : raw[k * C + 4 + c];
+                if (needsSigmoid) s = sigmoid(s);
+                if (s > best) { best = s; bestC = c; }
+            }
+            if (bestC < 0 || best < YOLO_KEEP_MIN) continue;
+            if (bestC >= NUM_CLASSES) continue; // 类别超出当前 3 类约定(黑/白/角点)时跳过
+            float p = Math.max(1e-6f, Math.min(1f - 1e-6f, best));
+            float logit = (float) Math.log(p / (1f - p));
+            for (int c = 0; c < NUM_CLASSES; c++) {
+                l.add(bestC == c ? logit : -100f);
+            }
+            b.add(cx / INPUT_SIZE);
+            b.add(cy / INPUT_SIZE);
+            b.add(w / INPUT_SIZE);
+            b.add(h / INPUT_SIZE);
+        }
+        if (l.isEmpty()) return null;
+        float[] outL = new float[l.size()];
+        float[] outB = new float[b.size()];
+        for (int i = 0; i < l.size(); i++) outL[i] = l.get(i);
+        for (int i = 0; i < b.size(); i++) outB[i] = b.get(i);
+        return new float[][]{outL, outB};
     }
 
     /** 水平翻转 Bitmap (用于 TTA)。 */
@@ -493,66 +535,56 @@ public class MokuRecognizer {
                                                   boolean uniformGrid,
                                                   RecognitionSettings rs,
                                                   float[][] externalCorners) throws Exception {
-        long tStart = System.currentTimeMillis();
-        int nLogit = NUM_QUERIES * NUM_CLASSES;
-        int nBox = NUM_QUERIES * 4;
-        final int NUM_VARIANTS = 4;
+        // 完全参照 Kaya moku-detector.detect(): 单次推理, 不做 TTA 多路融合。
+        // 直接对本次推理输出做 postprocess(解码 → 角点 → H → 网格映射)。
+        return postprocess(out[0], out[1], imgW, imgH, threshold, bmp, pp.lb,
+                out[0].length / NUM_CLASSES, uniformGrid, rs, externalCorners);
+    }
 
-        // 变体 1: 原始 (已由 caller 完成,放在 index 0)
-        float[][] allLogits = new float[NUM_VARIANTS][];
-        float[][] allBoxes  = new float[NUM_VARIANTS][];
-        allLogits[0] = out[0];
-        allBoxes[0]  = out[1].clone();
-
-        // 变体 2: 水平翻转 (H)
-        long t = System.currentTimeMillis();
-        Bitmap bmpH = flipHorizontal(bmp);
-        PreprocessResult ppH = preprocess(bmpH, imgW, imgH);
-        float[][] outH = runInference(ppH.input);
-        allLogits[1] = outH[0];
-        allBoxes[1] = outH[1].clone();
-        for (int i = 0; i < NUM_QUERIES; i++) {
-            allBoxes[1][i * 4] = 1.0f - allBoxes[1][i * 4]; // cx 镜像
+    /**
+     * 阶段 1 用:从推理输出提取棋盘角点候选(class=2)。
+     * 角点是最可靠的棋盘位置信号(低阈值 CORNER_MIN_THRESHOLD,与 postprocess 口径一致),
+     * 供阶段 2 做透视拉正裁剪(棋盘四角→正方形,背景完全裁掉)。
+     * 返回按置信度降序、就近去重后的候选(至少 2 个才可能有意义)。
+     */
+    private static List<Detection> extractCornerCandidates(float[] logits, float[] predBoxes,
+                                                           LetterboxInfo lb,
+                                                           int imgW, int imgH) {
+        List<Detection> corners = new ArrayList<>();
+        int nq = logits.length / NUM_CLASSES;
+        for (int i = 0; i < nq; i++) {
+            int logitBase = i * NUM_CLASSES;
+            int bestClass = 0;
+            float bestScore = logits[logitBase];
+            for (int c = 1; c < NUM_CLASSES; c++) {
+                if (logits[logitBase + c] > bestScore) {
+                    bestScore = logits[logitBase + c];
+                    bestClass = c;
+                }
+            }
+            bestScore = sigmoid(bestScore);
+            if (bestClass != CLASS_BOARD_CORNER || bestScore < CORNER_MIN_THRESHOLD) continue;
+            int boxBase = i * 4;
+            float cx = (predBoxes[boxBase] * INPUT_SIZE - lb.padX) / lb.scaleX;
+            float cy = (predBoxes[boxBase + 1] * INPUT_SIZE - lb.padY) / lb.scaleY;
+            corners.add(new Detection(cx, cy, 0f, 0f, CLASS_BOARD_CORNER, bestScore));
         }
-        Log.d(TAG, "TTA-H 耗时" + (System.currentTimeMillis() - t) + "ms");
-
-        // 变体 3: 垂直翻转 (V)
-        t = System.currentTimeMillis();
-        Bitmap bmpV = flipVertical(bmp);
-        PreprocessResult ppV = preprocess(bmpV, imgW, imgH);
-        float[][] outV = runInference(ppV.input);
-        allLogits[2] = outV[0];
-        allBoxes[2] = outV[1].clone();
-        for (int i = 0; i < NUM_QUERIES; i++) {
-            allBoxes[2][i * 4 + 1] = 1.0f - allBoxes[2][i * 4 + 1]; // cy 镜像
+        if (corners.size() < 2) return corners;
+        // 置信度降序 + 就近去重(模型可能在同一个角附近检出多个)
+        corners.sort((a, b) -> Float.compare(b.score, a.score));
+        List<Detection> dedup = new ArrayList<>();
+        float minDist = Math.max(imgW, imgH) * 0.05f;
+        for (Detection d : corners) {
+            boolean dup = false;
+            for (Detection k : dedup) {
+                if (Math.hypot(d.cx - k.cx, d.cy - k.cy) < minDist) {
+                    dup = true;
+                    break;
+                }
+            }
+            if (!dup) dedup.add(d);
         }
-        Log.d(TAG, "TTA-V 耗时" + (System.currentTimeMillis() - t) + "ms");
-
-        // 变体 4: 180° 旋转 (H+V 组合)
-        t = System.currentTimeMillis();
-        Bitmap bmpR = flipVertical(bmpH); // reuse the already-flipped-H bitmap
-        PreprocessResult ppR = preprocess(bmpR, imgW, imgH);
-        float[][] outR = runInference(ppR.input);
-        allLogits[3] = outR[0];
-        allBoxes[3] = outR[1].clone();
-        for (int i = 0; i < NUM_QUERIES; i++) {
-            allBoxes[3][i * 4]     = 1.0f - allBoxes[3][i * 4];     // cx 镜像(H)
-            allBoxes[3][i * 4 + 1] = 1.0f - allBoxes[3][i * 4 + 1]; // cy 镜像(V)
-        }
-        Log.d(TAG, "TTA-R(180) 耗时" + (System.currentTimeMillis() - t) + "ms");
-
-        // 合并 4 路
-        float[] combinedLogits = new float[nLogit * NUM_VARIANTS];
-        float[] combinedBoxes  = new float[nBox * NUM_VARIANTS];
-        for (int v = 0; v < NUM_VARIANTS; v++) {
-            System.arraycopy(allLogits[v], 0, combinedLogits, v * nLogit, nLogit);
-            System.arraycopy(allBoxes[v],  0, combinedBoxes,  v * nBox,   nBox);
-        }
-
-        Log.i(TAG, "4 路 TTA 完成: 4×" + NUM_QUERIES + " = " + (NUM_QUERIES * NUM_VARIANTS)
-                + " query 合并, 总耗时" + (System.currentTimeMillis() - tStart) + "ms");
-        return postprocess(combinedLogits, combinedBoxes, imgW, imgH, threshold, bmp, pp.lb,
-                NUM_QUERIES * NUM_VARIANTS, uniformGrid, rs, externalCorners);
+        return dedup;
     }
 
     /**
@@ -570,7 +602,10 @@ public class MokuRecognizer {
                                        LetterboxInfo lb) {
         List<Float> xs = new ArrayList<>();
         List<Float> ys = new ArrayList<>();
-        for (int i = 0; i < NUM_QUERIES; i++) {
+        List<Float> cxs = new ArrayList<>(); // 角点:棋盘位置最可靠信号,裁剪定位一并使用
+        List<Float> cys = new ArrayList<>();
+        int nq = logits.length / NUM_CLASSES; // query 数动态(RT-DETR=300, YOLOv8=过滤后候选数)
+        for (int i = 0; i < nq; i++) {
             int logitBase = i * NUM_CLASSES;
             int bestClass = 0;
             float bestScore = logits[logitBase];
@@ -581,37 +616,59 @@ public class MokuRecognizer {
                 }
             }
             bestScore = sigmoid(bestScore);
-            if (bestClass == CLASS_BOARD_CORNER) continue;
-            // 类别感知阈值:与 postprocess 保持一致,过滤低分误检
-            float minScore = (bestClass == CLASS_BLACK_STONE)
-                    ? threshold + BLACK_STONE_THRESHOLD_BIAS
-                    : threshold + WHITE_STONE_THRESHOLD_BIAS;
-            if (bestScore < minScore) continue;
             int boxBase = i * 4;
             // letterbox 坐标逆映射: 640 归一化 → 去掉 padding → 还原原图比例
-            float cx = (predBoxes[boxBase] * INPUT_SIZE - lb.padX) / lb.scale;
-            float cy = (predBoxes[boxBase + 1] * INPUT_SIZE - lb.padY) / lb.scale;
+            float cx = (predBoxes[boxBase] * INPUT_SIZE - lb.padX) / lb.scaleX;
+            float cy = (predBoxes[boxBase + 1] * INPUT_SIZE - lb.padY) / lb.scaleY;
             // 落在 padding 区的误检会映射到图像外,夹到边界内供裁剪定位用
             cx = Math.max(0, Math.min(cx, imgW - 1));
             cy = Math.max(0, Math.min(cy, imgH - 1));
+            if (bestClass == CLASS_BOARD_CORNER) {
+                // 角点用低阈值(与 postprocess 一致),直接作为棋盘区域信号
+                if (bestScore >= CORNER_MIN_THRESHOLD) {
+                    cxs.add(cx);
+                    cys.add(cy);
+                }
+                continue;
+            }
+            // 统一阈值:与 postprocess/Kaya decode 一致,黑白子不区分
+            if (bestScore < threshold) continue;
             xs.add(cx);
             ys.add(cy);
         }
         int count = xs.size();
-        Log.i(TAG, "阶段 1 检测到 " + count + " 个棋子 (类别感知阈值过滤, 用于自动裁剪)");
-        if (count == 0) return null;
+        int cornerCount = cxs.size();
+        Log.i(TAG, "阶段 1 检测: 棋子 " + count + " 个, 角点 " + cornerCount
+                + " 个 (用于自动裁剪定位)");
+        if (count == 0 && cornerCount == 0) return null;
 
-        // 稳健包围盒:各方向剔除最外 5% 离群点,避免单个误检撑大 bbox
-        Collections.sort(xs);
-        Collections.sort(ys);
-        int trim = Math.max(0, (int) (count * 0.05f));
-        int lo = trim, hi = count - 1 - trim;
-        if (hi <= lo) { lo = 0; hi = count - 1; } // 点数过少时不剔除
-        float minX = xs.get(lo);
-        float maxX = xs.get(hi);
-        float minY = ys.get(lo);
-        float maxY = ys.get(hi);
-        return new float[]{minX, minY, maxX, maxY};
+        // 棋子包围盒:各方向剔除最外 5% 离群点,避免个别误检撑大 bbox
+        float[] stoneBox = null;
+        if (count > 0) {
+            Collections.sort(xs);
+            Collections.sort(ys);
+            int trim = Math.max(0, (int) (count * 0.05f));
+            int lo = trim, hi = count - 1 - trim;
+            if (hi <= lo) { lo = 0; hi = count - 1; } // 点数过少时不剔除
+            stoneBox = new float[]{xs.get(lo), ys.get(lo), xs.get(hi), ys.get(hi)};
+        }
+        // 角点包围盒:角点贴近棋盘四角,外接矩形即为棋盘区域
+        float[] cornerBox = null;
+        if (cornerCount > 0) {
+            Collections.sort(cxs);
+            Collections.sort(cys);
+            cornerBox = new float[]{cxs.get(0), cys.get(0),
+                    cxs.get(cornerCount - 1), cys.get(cornerCount - 1)};
+        }
+        // 并集:角点撑开棋子漏掉的棋盘边,棋子补上角点漏检的边
+        if (stoneBox != null && cornerBox != null) {
+            return new float[]{
+                    Math.min(stoneBox[0], cornerBox[0]),
+                    Math.min(stoneBox[1], cornerBox[1]),
+                    Math.max(stoneBox[2], cornerBox[2]),
+                    Math.max(stoneBox[3], cornerBox[3])};
+        }
+        return (stoneBox != null) ? stoneBox : cornerBox;
     }
 
     /**
@@ -649,13 +706,18 @@ public class MokuRecognizer {
 
     // ==================== 预处理 ====================
 
-    /** Letterbox 信息:保持长宽比 resize 后的缩放比例和 padding。 */
+    /**
+     * Resize 信息:直接拉伸到 INPUT_SIZE×INPUT_SIZE 的缩放比例(x/y 独立, 无 padding),
+     * 与 moku-v3 训练预处理一致 (RTDetrImageProcessor do_resize=true, size=640×640,
+     * do_pad=false; Kaya board-recognition 同样直接拉伸)。
+     */
     private static class LetterboxInfo {
-        final float scale;
+        final float scaleX, scaleY;
         final int padX, padY;
         final int newW, newH;
-        LetterboxInfo(float scale, int padX, int padY, int newW, int newH) {
-            this.scale = scale;
+        LetterboxInfo(float scaleX, float scaleY, int padX, int padY, int newW, int newH) {
+            this.scaleX = scaleX;
+            this.scaleY = scaleY;
             this.padX = padX;
             this.padY = padY;
             this.newW = newW;
@@ -674,72 +736,18 @@ public class MokuRecognizer {
     }
 
     /**
-     * 对比度增强:直方图 1%-99% 分位拉伸,改善光照不均/低对比度图像。
-     * 按亮度(luminance)计算分位,统一增益应用到 RGB 三通道,避免色偏。
-     * 对比度已足够 (hi-lo > 200) 时跳过,避免无谓处理。
-     */
-    private static Bitmap enhanceContrast(Bitmap src) {
-        int w = src.getWidth();
-        int h = src.getHeight();
-        int[] pixels = new int[w * h];
-        src.getPixels(pixels, 0, w, 0, 0, w, h);
-
-        int[] hist = new int[256];
-        for (int px : pixels) {
-            int r = (px >> 16) & 0xFF;
-            int g = (px >> 8) & 0xFF;
-            int b = px & 0xFF;
-            int lum = (int) (0.299f * r + 0.587f * g + 0.114f * b);
-            hist[lum]++;
-        }
-
-        int total = w * h;
-        int loCount = (int) (total * 0.01f);
-        int hiCount = (int) (total * 0.01f);
-        int lo = 0, hi = 255;
-        int cum = 0;
-        for (int i = 0; i < 256; i++) {
-            cum += hist[i];
-            if (cum >= loCount) { lo = i; break; }
-        }
-        cum = 0;
-        for (int i = 255; i >= 0; i--) {
-            cum += hist[i];
-            if (cum >= hiCount) { hi = i; break; }
-        }
-        if (hi - lo < 10) return src;
-        if (hi - lo > 200) return src;
-
-        float gain = 255f / (hi - lo);
-        for (int i = 0; i < pixels.length; i++) {
-            int px = pixels[i];
-            int a = (px >> 24) & 0xFF;
-            int r = (px >> 16) & 0xFF;
-            int g = (px >> 8) & 0xFF;
-            int b = px & 0xFF;
-            r = Math.max(0, Math.min(255, Math.round((r - lo) * gain)));
-            g = Math.max(0, Math.min(255, Math.round((g - lo) * gain)));
-            b = Math.max(0, Math.min(255, Math.round((b - lo) * gain)));
-            pixels[i] = (a << 24) | (r << 16) | (g << 8) | b;
-        }
-        Bitmap result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-        result.setPixels(pixels, 0, w, 0, 0, w, h);
-        Log.d(TAG, String.format("对比度增强: 拉伸 [%d,%d] → [0,255] gain=%.2f", lo, hi, gain));
-        return result;
-    }
-
-    /**
-     * Letterbox 预处理:保持长宽比 resize 到 INPUT_SIZE×INPUT_SIZE,空白处填 0 (黑色)。
+     * 预处理:直接拉伸到 INPUT_SIZE×INPUT_SIZE (与 moku-v3 模型训练配置一致——
+     * RTDetrImageProcessor do_resize=true, size=640×640, do_pad=false, resample=bilinear;
+     * Kaya board-recognition 的 preprocess 同样直接拉伸, 无 letterbox/pad)。
      * 输出 CHW float[3 * 640 * 640],值域 [0,1]。
-     * 避免直接拉伸导致长宽比扭曲 (如 720x1600 直接 resize 到 640x640 会严重压扁)。
      */
     private static PreprocessResult preprocess(Bitmap bmp, int srcW, int srcH) {
         return preprocess(bmp, srcW, srcH, 1.0f);
     }
 
     /**
-     * @param scaleBoost 缩放增强系数 (TTA 用)。1.0=原样; <1 在原图基础上再缩小 (棋盘占图比例变化,
-     *                  有助于模型在不同尺度下召回弱对比子); 内部对原图做 center-crop 后再 letterbox。
+     * @param scaleBoost 缩放增强系数 (TTA 用)。1.0=原样; <1 在原图基础上 center-crop 再拉伸
+     *                  (棋盘占图比例变化, 有助于模型在不同尺度下召回弱对比子)。
      */
     private static PreprocessResult preprocess(Bitmap bmp, int srcW, int srcH, float scaleBoost) {
         if (scaleBoost != 1.0f) {
@@ -752,23 +760,20 @@ public class MokuRecognizer {
             srcW = cw;
             srcH = ch;
         }
-        float scale = Math.min((float) INPUT_SIZE / srcW, (float) INPUT_SIZE / srcH);
-        int newW = Math.max(1, Math.round(srcW * scale));
-        int newH = Math.max(1, Math.round(srcH * scale));
-        int padX = (INPUT_SIZE - newW) / 2;
-        int padY = (INPUT_SIZE - newH) / 2;
-        LetterboxInfo lb = new LetterboxInfo(scale, padX, padY, newW, newH);
+        // 直接拉伸: x/y 独立缩放, 无 padding (与训练预处理一致)
+        float scaleX = (float) INPUT_SIZE / srcW;
+        float scaleY = (float) INPUT_SIZE / srcH;
+        LetterboxInfo lb = new LetterboxInfo(scaleX, scaleY, 0, 0, INPUT_SIZE, INPUT_SIZE);
 
         float[] buf = new float[3 * INPUT_SIZE * INPUT_SIZE];
-        // buf 默认全 0 (黑色 padding),只填充实际内容区域
         int[] pixels = new int[srcW * srcH];
         bmp.getPixels(pixels, 0, srcW, 0, 0, srcW, srcH);
 
-        // 双线性 resize 到 newW×newH,放到 (padX, padY) 位置
-        for (int y = 0; y < newH; y++) {
-            for (int x = 0; x < newW; x++) {
-                float srcX = (x + 0.5f) / scale - 0.5f;
-                float srcY = (y + 0.5f) / scale - 0.5f;
+        // 双线性拉伸到 640×640 (坐标映射与 Kaya preprocess 完全一致)
+        for (int y = 0; y < INPUT_SIZE; y++) {
+            for (int x = 0; x < INPUT_SIZE; x++) {
+                float srcX = (x + 0.5f) * ((float) srcW / INPUT_SIZE) - 0.5f;
+                float srcY = (y + 0.5f) * ((float) srcH / INPUT_SIZE) - 0.5f;
                 int x0 = Math.max(0, (int) Math.floor(srcX));
                 int y0 = Math.max(0, (int) Math.floor(srcY));
                 int x1 = Math.min(x0 + 1, srcW - 1);
@@ -782,8 +787,6 @@ public class MokuRecognizer {
                 int i11 = y1 * srcW + x1;
                 int p00 = pixels[i00], p10 = pixels[i10], p01 = pixels[i01], p11 = pixels[i11];
 
-                int outX = padX + x;
-                int outY = padY + y;
                 for (int c = 0; c < 3; c++) {
                     int shift = 16 - 8 * c; // R=16, G=8, B=0
                     int mask = 0xFF << shift;
@@ -795,7 +798,7 @@ public class MokuRecognizer {
                               + v10 * fx * (1 - fy)
                               + v01 * (1 - fx) * fy
                               + v11 * fx * fy;
-                    buf[c * INPUT_SIZE * INPUT_SIZE + outY * INPUT_SIZE + outX] = val / 255f;
+                    buf[c * INPUT_SIZE * INPUT_SIZE + y * INPUT_SIZE + x] = val / 255f;
                 }
             }
         }
@@ -810,7 +813,7 @@ public class MokuRecognizer {
                                                   LetterboxInfo lb,
                                                   RecognitionSettings rs) {
         return postprocess(logits, predBoxes, imgW, imgH, threshold, srcBmp, lb,
-                NUM_QUERIES, false, rs, null);
+                logits.length / NUM_CLASSES, false, rs, null);
     }
 
     private static RecognitionResult postprocess(float[] logits, float[] predBoxes,
@@ -848,11 +851,13 @@ public class MokuRecognizer {
         // score 分布统计(0-0.02, 0.02-0.05, 0.05-0.1, 0.1-0.3, 0.3+)
         int[] scoreBuckets = new int[5];
 
-        // 解码 query：每个 query 输出一个物体（RT-DETR 约定）
-        // TTA 合并时 numQueries=600 (原始300 + 翻转300)
+        // 解码 query：每个 query 输出一个物体（RT-DETR 约定; YOLOv8 已在 decodeYolov8
+        // 转成相同布局, query 数为解码过滤后的候选数）。query 数由 logits 长度推导,
+        // 兼容 RT-DETR(300) 与 YOLOv8(动态), TTA 合并后为各变体之和。
+        int nq = logits.length / NUM_CLASSES;
         // 同时统计每类 top3 分数,便于排查阈值是否过松/过紧
         float[] topBlack = {0,0,0}, topWhite = {0,0,0}, topCorner = {0,0,0};
-        for (int q = 0; q < numQueries; q++) {
+        for (int q = 0; q < nq; q++) {
             int logitBase = q * NUM_CLASSES;
             int boxBase = q * 4;
             int bestClass = 0;
@@ -864,16 +869,11 @@ public class MokuRecognizer {
                     bestClass = c;
                 }
             }
-            // 角点用低阈值;棋子用类别感知阈值:
-            //   黑子对比度高 → 阈值稍高 过滤误检; 白子对比度低 → 阈值稍低 保召回
-            float minScore;
-            if (bestClass == CLASS_BOARD_CORNER) {
-                minScore = CORNER_MIN_THRESHOLD;
-            } else if (bestClass == CLASS_BLACK_STONE) {
-                minScore = threshold + BLACK_STONE_THRESHOLD_BIAS;
-            } else {
-                minScore = threshold + WHITE_STONE_THRESHOLD_BIAS;
-            }
+            // 完全参照 Kaya decode: 角点用 CORNER_MIN_THRESHOLD, 棋子统一用 threshold
+            // (Kaya 对黑白子一视同仁, 无类别感知阈值; 之前 Android 用黑白不同阈值
+            //  导致白子误检多于 Kaya、黑子漏检多于 Kaya, 与 Kaya 结果不一致)
+            float minScore = (bestClass == CLASS_BOARD_CORNER)
+                    ? CORNER_MIN_THRESHOLD : threshold;
             // 收集 top3 分数 (无论是否过阈值)
             if (bestClass == CLASS_BLACK_STONE) updateTop(topBlack, bestScore);
             else if (bestClass == CLASS_WHITE_STONE) updateTop(topWhite, bestScore);
@@ -892,25 +892,25 @@ public class MokuRecognizer {
             if (bestClass != CLASS_BOARD_CORNER
                     && bestScore >= threshold * 0.5f
                     && bestScore < minScore) {
-                float cx = (predBoxes[boxBase] * INPUT_SIZE - lb.padX) / lb.scale;
-                float cy = (predBoxes[boxBase + 1] * INPUT_SIZE - lb.padY) / lb.scale;
-                float bw = predBoxes[boxBase + 2] * INPUT_SIZE / lb.scale;
-                float bh = predBoxes[boxBase + 3] * INPUT_SIZE / lb.scale;
+                float cx = (predBoxes[boxBase] * INPUT_SIZE - lb.padX) / lb.scaleX;
+                float cy = (predBoxes[boxBase + 1] * INPUT_SIZE - lb.padY) / lb.scaleY;
+                float bw = predBoxes[boxBase + 2] * INPUT_SIZE / lb.scaleX;
+                float bh = predBoxes[boxBase + 3] * INPUT_SIZE / lb.scaleY;
                 borderline.add(new Detection(cx, cy, bw, bh, bestClass, bestScore));
             }
 
             if (bestScore < minScore) continue;
             // pred_boxes 为 [cx, cy, w, h] 归一化到 [0,1] (相对含 padding 的 640×640)
             // letterbox 逆映射回原图坐标
-            float cx = (predBoxes[boxBase] * INPUT_SIZE - lb.padX) / lb.scale;
-            float cy = (predBoxes[boxBase + 1] * INPUT_SIZE - lb.padY) / lb.scale;
-            float bw = predBoxes[boxBase + 2] * INPUT_SIZE / lb.scale;
-            float bh = predBoxes[boxBase + 3] * INPUT_SIZE / lb.scale;
+            float cx = (predBoxes[boxBase] * INPUT_SIZE - lb.padX) / lb.scaleX;
+            float cy = (predBoxes[boxBase + 1] * INPUT_SIZE - lb.padY) / lb.scaleY;
+            float bw = predBoxes[boxBase + 2] * INPUT_SIZE / lb.scaleX;
+            float bh = predBoxes[boxBase + 3] * INPUT_SIZE / lb.scaleY;
             Detection det = new Detection(cx, cy, bw, bh, bestClass, bestScore);
             if (bestClass == CLASS_BOARD_CORNER) cornerCandidates.add(det);
             else stones.add(det);
         }
-        Log.i(TAG, "解码 " + numQueries + " query: 候选黑" + countClass(stones, CLASS_BLACK_STONE)
+        Log.i(TAG, "解码 " + nq + " query: 候选黑" + countClass(stones, CLASS_BLACK_STONE)
                 + " 候选白" + countClass(stones, CLASS_WHITE_STONE)
                 + " 候选角" + cornerCandidates.size()
                 + String.format(" | top3黑=%.3f/%.3f/%.3f top3白=%.3f/%.3f/%.3f top3角=%.3f/%.3f/%.3f"
@@ -935,14 +935,11 @@ public class MokuRecognizer {
             Log.w(TAG, sb.toString());
         }
 
-        // 多查询 (TTA) 用 WBF 加权框融合:重叠框按置信度加权平均取中心,
-        // 相比 NMS 硬丢弃低分框,定位更准,网格偏差更小,过检率更低
-        int beforeDedup = stones.size();
-        stones = applyWBF(stones, WBF_IOU_THRESHOLD);
-        Log.i(TAG, "WBF: " + beforeDedup + " → " + stones.size()
-                + " (IoU>" + WBF_IOU_THRESHOLD + " 加权融合), 候选黑"
-                + countClass(stones, CLASS_BLACK_STONE)
-                + " 候选白" + countClass(stones, CLASS_WHITE_STONE));
+        // 完全参照 Kaya: 棋子不做 WBF/NMS/去重 —— 直接全量进入网格映射,
+        // 同位置冲突由 mapStonesToGrid 按 score 抢占处理(Kaya 语义)。
+        // 候选黑/白统计
+        Log.i(TAG, "解码候选: 黑" + countClass(stones, CLASS_BLACK_STONE)
+                + " 白" + countClass(stones, CLASS_WHITE_STONE) + " 共" + stones.size() + "个");
 
         // 角点按置信度降序排序
         cornerCandidates.sort((a, b) -> Float.compare(b.score, a.score));
@@ -971,64 +968,30 @@ public class MokuRecognizer {
         RecognitionResult out = new RecognitionResult();
         out.board = new int[BOARD_SIZE][BOARD_SIZE]; // 默认 0=空
 
-        // ===== 均匀网格模式(用户手动裁剪的棋盘) =====
-        // 不依赖模型角点检测:角点是围棋识别整盘错位的主要根因(角点定位失败→H 矩阵错→
-        // 19×19 网格整体错乱)。用户已手动裁剪出"近似矩形的 19 路棋盘",直接假设为均匀网格:
-        // 用检测到的棋子 bbox 外扩锚定 19 路交叉点,然后在每个交叉点位置识别有没有子/什么颜色。
-        if (uniformGrid) {
-            float[][] corners = fitUniformGridCorners(stones, imgW, imgH);
-            Log.i(TAG, "均匀网格模式(手动裁剪):跳过角点检测, 用棋子bbox外扩锚定19路网格 "
-                    + String.format("TL(%.0f,%.0f) TR(%.0f,%.0f) BR(%.0f,%.0f) BL(%.0f,%.0f)",
-                        corners[0][0], corners[0][1], corners[1][0], corners[1][1],
-                        corners[2][0], corners[2][1], corners[3][0], corners[3][1]));
-            verifyStonesColor(stones, srcBmp, rs);
-            mapStonesToGrid(stones, corners, out.board, imgW, imgH, rs); // uniformGrid 已是 fit,无需再降级
-            int recovered =             recoverMissedStones(srcBmp, corners, out.board, rs);
-            if (recovered > 0) Log.i(TAG, "漏检恢复(均匀网格): 补回 " + recovered + " 个棋子");
-            int reviewU = fullBoardReview(srcBmp, corners, out.board, rs);
-            if (reviewU > 0) Log.i(TAG, "全棋盘复核(均匀网格): 改动 " + reviewU + " 格");
-            out.corners = corners;
-            out.cornersDetected = true;
-            out.blackCount = countColor(out.board, BLACK);
-            out.whiteCount = countColor(out.board, WHITE);
-            out.message = "手动裁剪:均匀网格识别";
-            return out;
-        }
+        // ===== 完全参照 Kaya moku-postprocess.ts =====
+        // 角点处理链: <2 角 → 图像内缩兜底(空棋盘); 2 角/3 角补全; ≥4 角取 top4;
+        // orderCorners 顺时针排序; 退化(bbox<2%)→ 图像内缩; 塌缩(两角<对角线5%)→ 图像内缩;
+        // 然后 H 单应 → 网格 round → 越界丢 → 冲突按 score 抢占。
+        // 不做 Android 特有的覆盖率降级/棋子网格拟合/漏检恢复/全盘复核 —— 与 Kaya 行为一致。
 
-        // 角点不足 2 个：使用图像边缘 5% 内缩作为 fallback，且放弃棋子识别
-        // (手动注入角点时跳过此 fallback)
+        // 角点不足 2 个: 使用图像边缘 5% 内缩兜底, 放弃棋子识别 (Kaya 语义)
         if (externalCorners == null && cornerCandidates.size() < 2) {
             float[][] corners = insetImageCorners(imgW, imgH, 0.05f);
-            Log.w(TAG, "角点不足 2 个, 使用图像内缩 fallback: "
+            Log.w(TAG, "角点不足 2 个, 使用图像内缩兜底且不映射棋子(与 Kaya 一致): "
                     + corners[0][0] + "," + corners[0][1] + " ...");
-            verifyStonesColor(stones, srcBmp, rs);
-            boolean badGeo = mapStonesToGrid(stones, corners, out.board, imgW, imgH, rs);
-            if (badGeo && stones.size() >= 4) {
-                Log.w(TAG, "→ 角不足路径几何异常, 降级棋子 bbox 拟合网格重映射");
-                corners = fitUniformGridCorners(stones, imgW, imgH);
-                out.board = new int[BOARD_SIZE][BOARD_SIZE];
-                mapStonesToGrid(stones, corners, out.board, imgW, imgH, rs);
-            }
-            // 模型漏检恢复: 反投影每个空网格交点回图像,采样像素确认
-            int recovered = recoverMissedStones(srcBmp, corners, out.board, rs);
-            if (recovered > 0) Log.i(TAG, "漏检恢复(角不足路径): 补回 " + recovered + " 个棋子");
-            int reviewF = fullBoardReview(srcBmp, corners, out.board, rs);
-            if (reviewF > 0) Log.i(TAG, "全棋盘复核(角不足路径): 改动 " + reviewF + " 格");
             out.corners = corners;
             out.cornersDetected = false;
-            out.blackCount = countColor(out.board, BLACK);
-            out.whiteCount = countColor(out.board, WHITE);
-            out.message = "未检测到棋盘角点,使用图像边角作为近似(精度可能下降)";
+            out.cornerCount = cornerCandidates.size();
+            out.blackCount = 0;
+            out.whiteCount = 0;
+            out.message = "未检测到棋盘角点";
             return out;
         }
 
         float[][] corners;
         if (externalCorners != null) {
-            // 手动注入四角(用户拖动校正):用户拖的角即权威,跳过自动检测与覆盖/退化降级。
-            // 注意:绝不用模型角点吸附用户位置——用户正是因模型角点不准才手动校正,
-            // 吸附(大窗口±¼边长)会把用户拖的角拉回"模型认为的位置",导致校正完全无效。
-            // 仅做 Harris 图像特征局部精修(±24px 窗口内找棋盘角特征,无显著特征则保持原位),
-            // 再交由棋子网格拟合(refineHWithStones)用棋子分布反推精确 H。
+            // 手动注入四角(用户拖动校正): 用户拖的角即权威, 直接用于 H 计算。
+            // 仅做 Harris 图像特征局部精修(±24px 窗口内找棋盘角特征, 无显著特征则保持原位)。
             boolean[] snapped = new boolean[4];
             corners = refineCornersToGrid(srcBmp, externalCorners, snapped);
             Log.i(TAG, "手动注入 4 角(Harris 精修后): "
@@ -1036,91 +999,59 @@ public class MokuRecognizer {
                         corners[0][0], corners[0][1], corners[1][0], corners[1][1],
                         corners[2][0], corners[2][1], corners[3][0], corners[3][1]));
         } else {
-            // 2 角:推断另外 2 个 (对角或邻边假设)
-            // 3 角:平行四边形补全
-            // ≥4 角:取 top 4
-            float[][] top4 = pickTop4Corners(cornerCandidates, imgW, imgH);
-            Log.d(TAG, "pickTop4Corners(输入" + cornerCandidates.size() + "角) → "
-                    + String.format("(%.0f,%.0f)-(%.0f,%.0f)-(%.0f,%.0f)-(%.0f,%.0f)",
-                        top4[0][0], top4[0][1], top4[1][0], top4[1][1],
-                        top4[2][0], top4[2][1], top4[3][0], top4[3][1]));
-
-            // 顺时针排序 TL→TR→BR→BL
-            corners = orderCorners(top4);
-            Log.d(TAG, "orderCorners TL→TR→BR→BL: "
+            // 优先用棋子位置推断角点 (模型检测棋子比角点更可靠, 尤其在非正方形拉伸图上)
+            float[][] stoneCorners = inferCornersFromStones(stones, imgW, imgH);
+            if (stoneCorners != null) {
+                corners = stoneCorners;
+                Log.i(TAG, "棋子推断角点(主路径): "
                     + String.format("TL(%.0f,%.0f) TR(%.0f,%.0f) BR(%.0f,%.0f) BL(%.0f,%.0f)",
                         corners[0][0], corners[0][1], corners[1][0], corners[1][1],
                         corners[2][0], corners[2][1], corners[3][0], corners[3][1]));
-
-            // 4 角覆盖范围检查:4 角 bbox 面积应该至少占图像 30%
-            // (棋盘正常应占画面大部分;若 4 角挤在小区域,说明模型把棋盘内部点
-            //  当成 corner,H 矩阵只覆盖小区域,外围棋子会全部越界)
-            float covRatio = computeCornerCoverageRatio(corners, imgW, imgH);
-            Log.d(TAG, String.format("4 角覆盖范围: bbox 占图像 %.1f%% (阈值 30%%)", covRatio * 100));
-
-            // 4 角使用策略(模型检测到的真实 4 角优先,保证边角精度;仅在不可信时回退):
-            // 1. 覆盖充足(≥70%) 且 非退化(无重合/非共线/近似矩形):用模型 4 角
-            // 2. 退化 或 覆盖不足(<30%) 或 覆盖足但退化:降级用棋子 bbox 拟合(数据驱动网格)
-            boolean degenerate = areCornersDegenerate(corners, imgW, imgH);
-            if (covRatio >= 0.70f && !degenerate) {
-                Log.d(TAG, String.format("4 角可信(覆盖%.1f%% 且非退化), 使用模型检测的真实 4 角",
-                        covRatio * 100));
-                // 保留 orderCorners(top4) 的结果
             } else {
-                if (degenerate) {
-                    Log.w(TAG, "4 角退化(重合/共线/非矩形), 降级为棋子 bbox 拟合网格(H不再算,保住已检棋子)");
-                } else {
-                    Log.w(TAG, String.format("4 角覆盖范围过小(%.1f%% < 30%%), 降级为棋子 bbox 拟合网格",
-                            covRatio * 100));
+                // 后备: 模型角点检测
+                // 2 角:推断另外 2 个 (对角或邻边假设); 3 角:平行四边形补全; ≥4 角:取 top 4
+                float[][] top4 = pickTop4Corners(cornerCandidates, imgW, imgH);
+                Log.d(TAG, "pickTop4Corners(输入" + cornerCandidates.size() + "角) → "
+                        + String.format("(%.0f,%.0f)-(%.0f,%.0f)-(%.0f,%.0f)-(%.0f,%.0f)",
+                            top4[0][0], top4[0][1], top4[1][0], top4[1][1],
+                            top4[2][0], top4[2][1], top4[3][0], top4[3][1]));
+
+                // 顺时针排序 TL→TR→BR→BL
+                corners = orderCorners(top4);
+                Log.d(TAG, "orderCorners TL→TR→BR→BL: "
+                        + String.format("TL(%.0f,%.0f) TR(%.0f,%.0f) BR(%.0f,%.0f) BL(%.0f,%.0f)",
+                            corners[0][0], corners[0][1], corners[1][0], corners[1][1],
+                            corners[2][0], corners[2][1], corners[3][0], corners[3][1]));
+
+                // 退化检查(与 Kaya areCornersDegenerate 一致: bbox 面积 < 图像 2%)→ 图像内缩兜底
+                if (areCornersDegenerate(corners, imgW, imgH)) {
+                    Log.w(TAG, "4 角退化(bbox 面积 < 2%), 使用图像内缩兜底(与 Kaya 一致)");
+                    corners = insetImageCorners(imgW, imgH, 0.05f);
                 }
-                corners = fitUniformGridCorners(stones, imgW, imgH);
-            }
-            Log.d(TAG, "最终使用 4 角: "
-                    + String.format("TL(%.0f,%.0f) TR(%.0f,%.0f) BR(%.0f,%.0f) BL(%.0f,%.0f)",
-                        corners[0][0], corners[0][1], corners[1][0], corners[1][1],
-                        corners[2][0], corners[2][1], corners[3][0], corners[3][1]));
-        }
-
-        // 颜色二次验证:采样棋子中心区域像素,验证模型黑白判断
-        // 修正明显的颜色错误(模型把黑当白或反之)
-        verifyStonesColor(stones, srcBmp, rs);
-
-        // 棋子映射到 19×19 网格
-        // 注入角点路径(externalCorners != null):启用棋子网格拟合再校准——
-        // 用手动四角做粗 H,再用检测棋子反推精确 H,消除手指拖拽误差
-        boolean badGeo = mapStonesToGrid(stones, corners, out.board, imgW, imgH, rs,
-                externalCorners != null);
-        // 几何异常(过多棋子偏差过大/冲突,说明角点/H 不准):降级到棋子 bbox 拟合网格重映射
-        if (badGeo && stones.size() >= 4) {
-            if (externalCorners != null) {
-                // 手动注入角点:信任用户指定范围,不降级(均匀网格假设对透视变形棋盘是错的,
-                // 降级反而让正确校正结果变乱)。偏差由 recoverMissedStones/fullBoardReview 用注入 H 补。
-                Log.w(TAG, "→ 注入角点路径几何偏差较大, 保持用户角点并靠反投影复核补正(不降级)");
-            } else {
-                Log.w(TAG, "→ 主路径几何异常, 降级用棋子 bbox 拟合网格重映射(避免角点不准导致整盘错)");
-                corners = fitUniformGridCorners(stones, imgW, imgH);
-                out.board = new int[BOARD_SIZE][BOARD_SIZE];
-                mapStonesToGrid(stones, corners, out.board, imgW, imgH, rs);
+                // 塌缩展开(与 Kaya spreadCollapsedCorners 一致: 任意两角距离 < 对角线 5%)→ 图像内缩兜底
+                corners = spreadCollapsedCorners(corners, imgW, imgH);
+                // 角点边界钳制(对应 Kaya UI 层 fixResultCorners.clampCorners):
+                // 允许角点略超图像 25% 溢出区, 防止检测噪声产生极端角点导致 H 畸形
+                corners = clampCorners(corners, imgW, imgH);
+                Log.d(TAG, "最终使用 4 角(角点检测): "
+                        + String.format("TL(%.0f,%.0f) TR(%.0f,%.0f) BR(%.0f,%.0f) BL(%.0f,%.0f)",
+                            corners[0][0], corners[0][1], corners[1][0], corners[1][1],
+                            corners[2][0], corners[2][1], corners[3][0], corners[3][1]));
             }
         }
 
-        // 模型漏检恢复: 反投影每个空网格交点回图像,采样像素确认
-        int recovered = recoverMissedStones(srcBmp, corners, out.board, rs);
-        if (recovered > 0) {
-            Log.i(TAG, "漏检恢复(主路径): 补回 " + recovered + " 个棋子");
-        }
-        int reviewM = fullBoardReview(srcBmp, corners, out.board, rs);
-        if (reviewM > 0) Log.i(TAG, "全棋盘复核(主路径): 改动 " + reviewM + " 格");
+        // 棋子映射到 19×19 网格 (Kaya mapStonesToGrid: H→round→越界丢→冲突按 score 抢占)
+        mapStonesToGrid(stones, corners, out.board, imgW, imgH, rs, false);
 
         out.corners = corners;
         out.cornersDetected = true;
+        out.cornerCount = cornerCandidates.size();
         out.blackCount = countColor(out.board, BLACK);
         out.whiteCount = countColor(out.board, WHITE);
         out.message = String.format("识别完成: 黑%d 白%d", out.blackCount, out.whiteCount);
         Log.i(TAG, "=== 识别结束 === " + out.message
                 + " | 输入棋子" + stones.size() + "个 (黑" + countClass(stones, CLASS_BLACK_STONE)
                 + "+白" + countClass(stones, CLASS_WHITE_STONE) + ")"
-                + " (漏检恢复" + recovered + ")"
                 + " → 19×19 网格 黑" + out.blackCount + " 白" + out.whiteCount);
         return out;
     }
@@ -1128,6 +1059,25 @@ public class MokuRecognizer {
     // ==================== 角点补全/排序 ====================
 
     private static float[][] pickTop4Corners(List<Detection> cornerCandidates, int imgW, int imgH) {
+        // 过滤图像四角假阳性: x 和 y 同时在边缘 5% 内的是图像角落, 不是棋盘角点
+        // (如 720x1600 竖图中 (16,66) 是图像左上角, 不是棋盘 TL)
+        if (cornerCandidates.size() > 4) {
+            float edgeX = imgW * 0.05f;
+            float edgeY = imgH * 0.05f;
+            List<Detection> filtered = new ArrayList<>();
+            for (Detection d : cornerCandidates) {
+                boolean nearCornerX = (d.cx < edgeX || d.cx > imgW - edgeX);
+                boolean nearCornerY = (d.cy < edgeY || d.cy > imgH - edgeY);
+                if (!(nearCornerX && nearCornerY)) {
+                    filtered.add(d);
+                }
+            }
+            if (filtered.size() >= 4) {
+                Log.d(TAG, "过滤图像角落假阳性: " + cornerCandidates.size() + " → " + filtered.size());
+                cornerCandidates = filtered;
+            }
+        }
+
         if (cornerCandidates.size() == 2) {
             // 推断另外 2 个角:对角/邻边两种假设,挑最合理的
             float[] p1 = {cornerCandidates.get(0).cx, cornerCandidates.get(0).cy};
@@ -1196,13 +1146,42 @@ public class MokuRecognizer {
                     pts[(bestDiagIdx + 1) % 3],
                     pts[(bestDiagIdx + 2) % 3], bestP4};
         } else {
-            // ≥4 个:取 top 4
-            float[][] pts = new float[4][2];
-            for (int i = 0; i < 4; i++) {
-                pts[i][0] = cornerCandidates.get(i).cx;
-                pts[i][1] = cornerCandidates.get(i).cy;
+            // ≥4 个:贪心无放回极值点法选四角
+            // 先 TL=min(x+y), 再 BR=max(x+y), 再 TR=max(x-y), 最后 BL=剩余
+            // (无放回避免同一点被选为两个角色导致塌缩)
+            List<Detection> remaining = new ArrayList<>(cornerCandidates);
+
+            // TL = min(x+y)
+            int tlIdx = 0; float minSum = Float.MAX_VALUE;
+            for (int i = 0; i < remaining.size(); i++) {
+                float s = remaining.get(i).cx + remaining.get(i).cy;
+                if (s < minSum) { minSum = s; tlIdx = i; }
             }
-            return pts;
+            float[] tl = {remaining.get(tlIdx).cx, remaining.get(tlIdx).cy};
+            remaining.remove(tlIdx);
+
+            // BR = max(x+y) from remaining
+            int brIdx = 0; float maxSum = -Float.MAX_VALUE;
+            for (int i = 0; i < remaining.size(); i++) {
+                float s = remaining.get(i).cx + remaining.get(i).cy;
+                if (s > maxSum) { maxSum = s; brIdx = i; }
+            }
+            float[] br = {remaining.get(brIdx).cx, remaining.get(brIdx).cy};
+            remaining.remove(brIdx);
+
+            // TR = max(x-y) from remaining
+            int trIdx = 0; float maxDiff = -Float.MAX_VALUE;
+            for (int i = 0; i < remaining.size(); i++) {
+                float d = remaining.get(i).cx - remaining.get(i).cy;
+                if (d > maxDiff) { maxDiff = d; trIdx = i; }
+            }
+            float[] tr = {remaining.get(trIdx).cx, remaining.get(trIdx).cy};
+            remaining.remove(trIdx);
+
+            // BL = last remaining
+            float[] bl = {remaining.get(0).cx, remaining.get(0).cy};
+
+            return new float[][]{tl, tr, br, bl};
         }
     }
 
@@ -1216,55 +1195,239 @@ public class MokuRecognizer {
      */
     private static float[][] orderCorners(float[][] pts) {
         if (pts.length != 4) return pts;
-        int tl = 0, br = 0, tr = 0, bl = 0;
-        float minSum = Float.MAX_VALUE, maxSum = -Float.MAX_VALUE;
-        float maxDiff = -Float.MAX_VALUE, minDiff = Float.MAX_VALUE;
-        for (int i = 0; i < 4; i++) {
-            float sum = pts[i][0] + pts[i][1];
-            float diff = pts[i][0] - pts[i][1];
-            if (sum < minSum) { minSum = sum; tl = i; }
-            if (sum > maxSum) { maxSum = sum; br = i; }
-            if (diff > maxDiff) { maxDiff = diff; tr = i; }
-            if (diff < minDiff) { minDiff = diff; bl = i; }
+        // 贪心无放回: 先 TL=min(x+y), 再 BR=max(x+y), 再 TR=max(x-y), 最后 BL=剩余
+        // (无放回避免同一点被分配为两个角色导致塌缩)
+        List<Integer> remaining = new ArrayList<>();
+        for (int i = 0; i < 4; i++) remaining.add(i);
+
+        // TL = min(x+y)
+        int tl = remaining.get(0); float minSum = Float.MAX_VALUE;
+        for (int idx : remaining) {
+            float s = pts[idx][0] + pts[idx][1];
+            if (s < minSum) { minSum = s; tl = idx; }
         }
+        remaining.remove(Integer.valueOf(tl));
+
+        // BR = max(x+y) from remaining
+        int br = remaining.get(0); float maxSum = -Float.MAX_VALUE;
+        for (int idx : remaining) {
+            float s = pts[idx][0] + pts[idx][1];
+            if (s > maxSum) { maxSum = s; br = idx; }
+        }
+        remaining.remove(Integer.valueOf(br));
+
+        // TR = max(x-y) from remaining
+        int tr = remaining.get(0); float maxDiff = -Float.MAX_VALUE;
+        for (int idx : remaining) {
+            float d = pts[idx][0] - pts[idx][1];
+            if (d > maxDiff) { maxDiff = d; tr = idx; }
+        }
+        remaining.remove(Integer.valueOf(tr));
+
+        // BL = last remaining
+        int bl = remaining.get(0);
+
         return new float[][]{ pts[tl], pts[tr], pts[br], pts[bl] };
     }
 
     /**
-     * 4 角退化检查:以下任一情况视为退化,应降级到棋子 bbox 兜底(而非用坏角点算 H):
-     *   1. bbox 面积 < 图像 2% (4 角挤成一团);
-     *   2. 任意两角过近 (< 短边 5%) —— 模型把同一点重复当角(BL=TL 这类);
-     *   3. 4 角近似共线 (四点构成多边形面积 ≈ 0) —— H 矩阵奇异;
-     *   4. 两组对边长度差异过大 (> 3 倍) —— 非近似矩形,角点选错。
+     * 4 角退化检查 —— 完全参照 Kaya areCornersDegenerate:
+     * 仅一条:4 角 bbox 面积 < 图像 2% (4 角挤成一团, 视为不可用)。
+     * 塌缩(两角过近)由独立的 spreadCollapsedCorners 处理, 与 Kaya 结构一致。
      */
     private static boolean areCornersDegenerate(float[][] corners, int w, int h) {
-        if (computeCornerCoverageRatio(corners, w, h) < 0.02f) return true;
-        float shortSide = Math.min(w, h);
-        // 任意两角过近
+        return computeCornerCoverageRatio(corners, w, h) < 0.02f;
+    }
+
+    /**
+     * 塌缩角点展开 —— 完全参照 Kaya corners.ts spreadCollapsedCorners:
+     * 4 角排好后, 若任意两角距离 < 图像对角线 5%, 说明角点挤在一起(模型把
+     * 同一个角重复检出, 或 2 角推断出了重合角), 用图像内缩 5% 角兜底。
+     */
+    private static float[][] spreadCollapsedCorners(float[][] corners, int w, int h) {
+        float minDist = (float) Math.hypot(w, h) * 0.05f;
         for (int i = 0; i < 4; i++) {
             for (int j = i + 1; j < 4; j++) {
                 float d = (float) Math.hypot(corners[i][0] - corners[j][0],
                         corners[i][1] - corners[j][1]);
-                if (d < shortSide * 0.05f) return true;
+                if (d < minDist) {
+                    Log.w(TAG, "角点塌缩(两角距离 " + String.format("%.1fpx < 对角线5%% %.1fpx)", d, minDist)
+                            + ", 使用图像内缩兜底(与 Kaya spreadCollapsedCorners 一致)");
+                    return insetImageCorners(w, h, 0.05f);
+                }
             }
         }
-        // 4 角近似共线:用鞋带公式算四边形面积,过小即退化 (面积阈值 = 短边^2 的 1%)
-        float area = shoeLaceArea(corners);
-        if (area < shortSide * shortSide * 0.01f) return true;
-        // 对边长度差异过大
-        float[] edge = new float[4];
+        return corners;
+    }
+
+    /**
+     * 角点边界钳制 —— 完全参照 Kaya UI 层 clampCorners(CORNER_OVERFLOW_FRACTION=0.25):
+     * 允许角点超出图像边缘 25% 的溢出区(棋盘延伸到照片外时角点本来就会在图外),
+     * 超出则钳回,防止检测噪声产生极端角点导致 H 矩阵畸形。
+     */
+    private static float[][] clampCorners(float[][] corners, int w, int h) {
+        float overX = w * 0.25f;
+        float overY = h * 0.25f;
+        float minX = -overX, maxX = (w - 1) + overX;
+        float minY = -overY, maxY = (h - 1) + overY;
+        float[][] out = new float[4][2];
+        boolean changed = false;
         for (int i = 0; i < 4; i++) {
-            int j = (i + 1) % 4;
-            edge[i] = (float) Math.hypot(corners[i][0] - corners[j][0],
-                    corners[i][1] - corners[j][1]);
+            out[i][0] = Math.max(minX, Math.min(maxX, corners[i][0]));
+            out[i][1] = Math.max(minY, Math.min(maxY, corners[i][1]));
+            if (out[i][0] != corners[i][0] || out[i][1] != corners[i][1]) changed = true;
         }
-        float diag1 = Math.max(edge[0], edge[2]); // 对边0-2
-        float diag2 = Math.max(edge[1], edge[3]); // 对边1-3
-        float minD = Math.min(edge[0], edge[2]);
-        float minD2 = Math.min(edge[1], edge[3]);
-        if (minD > 0 && diag1 / minD > 3f) return true;
-        if (minD2 > 0 && diag2 / minD2 > 3f) return true;
-        return false;
+        if (changed) {
+            Log.w(TAG, "角点越界, 钳制到溢出区(±25%): "
+                    + String.format("TL(%.0f,%.0f) TR(%.0f,%.0f) BR(%.0f,%.0f) BL(%.0f,%.0f)",
+                        out[0][0], out[0][1], out[1][0], out[1][1],
+                        out[2][0], out[2][1], out[3][0], out[3][1]));
+        }
+        return out;
+    }
+
+    /**
+     * 用棋子位置推断棋盘四角。
+     * 原理: 棋子位于 19×19 网格交叉点上, 同一行/列的棋子 x/y 坐标接近。
+     * 1. 聚类 x 坐标 → 网格列, 聚类 y 坐标 → 网格行
+     * 2. 估计网格间距 = 连续聚类中心差值的中位数
+     * 3. 用间距给每个聚类分配网格索引 (从 0 开始)
+     * 4. 线性回归 pos = a + b × index
+     * 5. 外推到 index 0 和 18 得到四角坐标
+     */
+    private static float[][] inferCornersFromStones(List<Detection> stones, int imgW, int imgH) {
+        if (stones == null || stones.size() < 6) return null;
+
+        float[] xs = new float[stones.size()];
+        float[] ys = new float[stones.size()];
+        for (int i = 0; i < stones.size(); i++) {
+            xs[i] = stones.get(i).cx;
+            ys[i] = stones.get(i).cy;
+        }
+        java.util.Arrays.sort(xs);
+        java.util.Arrays.sort(ys);
+
+        // 自适应聚类阈值: 先用较小阈值聚类, 估计网格间距, 再用间距的 40% 重新聚类
+        float initThreshold = Math.min(imgW, imgH) * 0.02f;
+        List<Float> xClusters0 = cluster1D(xs, initThreshold);
+        List<Float> yClusters0 = cluster1D(ys, initThreshold);
+
+        float gridSpacing = estimateGridSpacing(xClusters0, yClusters0);
+        float threshold = gridSpacing * 0.4f;
+        Log.d(TAG, "棋子推断角点: 初始阈值=" + initThreshold + " 估计网格间距=" + gridSpacing
+                + " 最终阈值=" + threshold);
+
+        List<Float> xClusters = cluster1D(xs, threshold);
+        List<Float> yClusters = cluster1D(ys, threshold);
+
+        Log.d(TAG, "棋子推断角点: xClusters=" + xClusters.size() + " yClusters=" + yClusters.size()
+                + " (棋子 " + stones.size() + " 个)");
+
+        if (xClusters.size() < 3 || yClusters.size() < 3) return null;
+
+        float[] xFit = fitGridLine(xClusters);
+        float[] yFit = fitGridLine(yClusters);
+        if (xFit == null || yFit == null) return null;
+
+        float x0 = xFit[0];
+        float x18 = xFit[0] + xFit[1] * 18;
+        float y0 = yFit[0];
+        float y18 = yFit[0] + yFit[1] * 18;
+
+        // 验证: 推断的棋盘尺寸应在合理范围内 (不能比图像大太多或太小)
+        float boardW = x18 - x0;
+        float boardH = y18 - y0;
+        if (boardW < imgW * 0.2f || boardW > imgW * 1.5f
+                || boardH < imgH * 0.2f || boardH > imgH * 1.5f) {
+            Log.w(TAG, "棋子推断角点不合理: boardW=" + boardW + " boardH=" + boardH
+                    + " imgW=" + imgW + " imgH=" + imgH + ", 放弃");
+            return null;
+        }
+
+        return new float[][]{
+            {x0, y0},    // TL
+            {x18, y0},   // TR
+            {x18, y18},  // BR
+            {x0, y18}    // BL
+        };
+    }
+
+    /** 从初始聚类估计网格间距: 取 x/y 聚类差值中位数的较小值。 */
+    private static float estimateGridSpacing(List<Float> xClusters, List<Float> yClusters) {
+        float xGap = medianGap(xClusters);
+        float yGap = medianGap(yClusters);
+        float gap = Math.min(xGap, yGap);
+        if (gap <= 0) gap = Math.min(xGap, yGap);
+        if (gap <= 0) gap = 30f; // 兜底
+        return gap;
+    }
+
+    private static float medianGap(List<Float> clusters) {
+        if (clusters.size() < 2) return 0;
+        float[] diffs = new float[clusters.size() - 1];
+        for (int i = 0; i < diffs.length; i++) {
+            diffs[i] = clusters.get(i + 1) - clusters.get(i);
+        }
+        java.util.Arrays.sort(diffs);
+        return diffs[diffs.length / 2];
+    }
+
+    /** 将排序后的坐标聚类, 返回每个聚类的中心。 */
+    private static List<Float> cluster1D(float[] sorted, float threshold) {
+        List<Float> clusters = new ArrayList<>();
+        float sum = sorted[0];
+        int count = 1;
+        for (int i = 1; i < sorted.length; i++) {
+            if (sorted[i] - sorted[i - 1] < threshold) {
+                sum += sorted[i];
+                count++;
+            } else {
+                clusters.add(sum / count);
+                sum = sorted[i];
+                count = 1;
+            }
+        }
+        clusters.add(sum / count);
+        return clusters;
+    }
+
+    /**
+     * 线性拟合网格线: pos = a + b × index。
+     * 用中位数差值作为间距, 给每个聚类分配索引, 然后最小二乘拟合。
+     */
+    private static float[] fitGridLine(List<Float> clusters) {
+        int n = clusters.size();
+        if (n < 2) return null;
+
+        float[] diffs = new float[n - 1];
+        for (int i = 0; i < n - 1; i++) {
+            diffs[i] = clusters.get(i + 1) - clusters.get(i);
+        }
+        java.util.Arrays.sort(diffs);
+        float spacing = diffs[diffs.length / 2];
+        if (spacing <= 0) return null;
+
+        int[] indices = new int[n];
+        indices[0] = 0;
+        for (int i = 1; i < n; i++) {
+            indices[i] = Math.round((clusters.get(i) - clusters.get(0)) / spacing);
+        }
+
+        float sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+        for (int i = 0; i < n; i++) {
+            sumX += indices[i];
+            sumY += clusters.get(i);
+            sumXY += indices[i] * clusters.get(i);
+            sumXX += (float) indices[i] * indices[i];
+        }
+        float denom = n * sumXX - sumX * sumX;
+        if (Math.abs(denom) < 1e-6f) return null;
+        float b = (n * sumXY - sumX * sumY) / denom;
+        float a = (sumY - b * sumX) / n;
+
+        Log.d(TAG, "  fitGridLine: " + n + " clusters, spacing=" + spacing
+                + String.format(", a=%.1f b=%.1f → [0]=%.1f [18]=%.1f", a, b, a, a + b * 18));
+        return new float[]{a, b};
     }
 
     /** 鞋带公式计算 4 角多边形有向面积绝对值。 */
@@ -1553,8 +1716,8 @@ public class MokuRecognizer {
     private static boolean mapStonesToGrid(List<Detection> stones, float[][] corners, int[][] board,
                                          int imgW, int imgH,
                                          RecognitionSettings rs) {
-        // 兼容性签名:自动检测/均匀网格路径不启用棋子拟合再校准
-        return mapStonesToGrid(stones, corners, board, imgW, imgH, rs, false);
+        // 兼容性签名:默认启用棋子拟合再校准(refineWithStones=true)
+        return mapStonesToGrid(stones, corners, board, imgW, imgH, rs, true);
     }
 
     /**
@@ -1671,12 +1834,8 @@ public class MokuRecognizer {
                 mapLog.append("-").append(kind).append(coord).append(" 越界\n");
                 continue;
             }
-            // 距离过滤:偏离网格点太远的棋子视为误检,丢弃
-            if (dev > MAX_DEVIATION) {
-                droppedFarFromGrid++;
-                mapLog.append("-").append(kind).append(coord).append(" 偏差过大\n");
-                continue;
-            }
+            // 完全参照 Kaya mapStonesToGrid: 不做偏差距离过滤,
+            // 只要 round 后落在网格内且无冲突即放置(Kaya 语义)。
             long key = (long) col * BOARD_SIZE + row;
             if (occupied.contains(key)) {
                 droppedConflict++;

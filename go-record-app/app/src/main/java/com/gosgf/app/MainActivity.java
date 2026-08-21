@@ -87,10 +87,7 @@ import java.util.Locale;
     private android.net.Uri pendingCameraUri = null;
     private ActivityResultLauncher<Intent> cameraLauncher;
     private ActivityResultLauncher<Intent> galleryLauncher;
-    private ActivityResultLauncher<Intent> cropActivityLauncher;  // 识别前自定义裁剪
-    private com.gosgf.app.util.MokuRecognizer mokuRecognizer;
-    private Thread mokuInitThread = null;
-    private boolean mokuLoading = false;
+    private com.gosgf.app.util.MokuRecognizer mokuRecognizer = null;
     private AlertDialog mokuProgressDialog = null;
 
     // Activity Result Launchers
@@ -275,7 +272,7 @@ import java.util.Locale;
                 Log.i(TAG, "cameraLauncher 回调: resultCode=" + result.getResultCode()
                         + " pendingCameraUri=" + pendingCameraUri);
                 if (result.getResultCode() == RESULT_OK && pendingCameraUri != null) {
-                    startCropActivity(pendingCameraUri);
+                    runRecognition(pendingCameraUri);
                 }
                 pendingCameraUri = null;
             }
@@ -295,36 +292,9 @@ import java.util.Locale;
                             getContentResolver().takePersistableUriPermission(uri,
                                     Intent.FLAG_GRANT_READ_URI_PERMISSION);
                         } catch (SecurityException ignored) {}
-                        startCropActivity(uri);
+                        runRecognition(uri);
                     }
                 }
-            }
-        );
-        // 识别前自定义裁剪(CropActivity)：用户圈定棋盘方位 → 裁剪结果 → 识别
-        cropActivityLauncher = registerForActivityResult(
-            new ActivityResultContracts.StartActivityForResult(),
-            result -> {
-                Log.i(TAG, "cropActivityLauncher 回调: resultCode=" + result.getResultCode());
-                if (result.getResultCode() == RESULT_OK && result.getData() != null) {
-                    // 四角校正模式:回传原图 + 用户摆好的四角 → 用四角做透视校正识别
-                    float[] cornersArr = result.getData()
-                            .getFloatArrayExtra(CropActivity.EXTRA_CORNERS);
-                    if (cornersArr != null && cornersArr.length == 8) {
-                        String imgUri = result.getData()
-                                .getStringExtra(CropActivity.EXTRA_IMAGE_URI);
-                        if (imgUri != null) {
-                            runRecognitionWithCorners(android.net.Uri.parse(imgUri), cornersArr);
-                            return;
-                        }
-                    }
-                    String cropUri = result.getData()
-                            .getStringExtra(CropActivity.EXTRA_CROP_URI);
-                    if (cropUri != null) {
-                        runRecognition(android.net.Uri.parse(cropUri));
-                        return;
-                    }
-                }
-                Log.w(TAG, "裁剪取消或失败, 放弃识别");
             }
         );
     }
@@ -451,12 +421,6 @@ import java.util.Locale;
         btnPlace.setOnClickListener(v -> {
             if (isPlaceMode) onPlace();
             else showPlaceOrScanMenu();
-        });
-        // 长按"摆子"按钮 → 打开"识别设置"页(调整识别参数,以设置项为准)
-        btnPlace.setOnLongClickListener(v -> {
-            startActivity(new android.content.Intent(this,
-                    com.gosgf.app.SettingsActivity.class));
-            return true;
         });
         btnDeleteBranch.setOnClickListener(v -> onDeleteBranch());
         btnScore.setOnClickListener(v -> onScore());
@@ -1024,196 +988,73 @@ import java.util.Locale;
         else if (requestCode == 1011) startGalleryPick();
     }
 
-    /** 用户选定图片 Uri 后,先启动自定义裁剪界面(用户圈定棋盘方位),再识别。 */
-    private void startCropActivity(android.net.Uri uri) {
-        Log.i(TAG, "startCropActivity: uri=" + uri);
-        Intent intent = new Intent(this, CropActivity.class);
-        intent.putExtra(CropActivity.EXTRA_IMAGE_URI, uri);
-        cropActivityLauncher.launch(intent);
-    }
-
-    /** 裁剪完成后调起识别流程：确保模型已加载 → 读取图片 → 后台推理 → 应用结果。 */
+    /** 选图/拍照后走 ONNX 模型识别流程 (与 kaya MokuDetector.detect 一致)。 */
     private void runRecognition(android.net.Uri uri) {
         Log.i(TAG, "runRecognition: uri=" + uri);
-        ensureMokuLoaded(() -> {
-            Log.i(TAG, "ensureMokuLoaded 回调, 启动识别线程");
-            // 主线程回弹窗，避免后台线程直接改 UI
-            runOnUiThread(() -> {
-                if (mokuProgressDialog != null) mokuProgressDialog.dismiss();
-                mokuProgressDialog = new AlertDialog.Builder(this)
-                        .setTitle(R.string.scan_board)
-                        .setMessage(R.string.scan_recognizing)
-                        .setCancelable(false)
-                        .show();
-            });
-            new Thread(() -> {
-                Exception err = null;
-                com.gosgf.app.util.MokuRecognizer.RecognitionResult result = null;
-                try {
-                    android.graphics.Bitmap bmp = loadBitmapFromUri(uri);
-                    Log.i(TAG, "loadBitmapFromUri → " + (bmp == null ? "null" :
-                            (bmp.getWidth() + "x" + bmp.getHeight())));
-                    if (bmp == null) throw new java.io.IOException("无法读取图片");
-                    // 传入图是用户手动裁剪的棋盘区域:跳过阶段2自动再裁剪(否则会把未被检测到的边角切掉)
-                    // 识别参数按"识别设置"页读取(无写死配置)
-                    com.gosgf.app.util.RecognitionSettings rs =
-                            com.gosgf.app.util.RecognitionSettings.load(MainActivity.this);
-                    result = mokuRecognizer.recognize(bmp,
-                            com.gosgf.app.util.MokuRecognizer.DEFAULT_THRESHOLD, true, rs);
-                } catch (Exception e) {
-                    err = e;
-                    Log.e(TAG, "识别异常: " + e.getClass().getSimpleName()
-                            + ": " + e.getMessage(), e);
-                }
-                final com.gosgf.app.util.MokuRecognizer.RecognitionResult r = result;
-                final Exception finalErr = err;
-                runOnUiThread(() -> {
-                    if (mokuProgressDialog != null) {
-                        mokuProgressDialog.dismiss();
-                        mokuProgressDialog = null;
-                    }
-                    if (finalErr != null) {
-                        Toast.makeText(this, getString(R.string.scan_failed, finalErr.getMessage()),
-                                Toast.LENGTH_LONG).show();
-                    } else {
-                        applyRecognitionResult(r);
-                    }
-                });
-            }).start();
-        });
-    }
-
-    /**
-     * 四角校正识别：用户已在裁剪页把四角拖到棋盘四个角(透视变形场景)，
-     * 识别侧跳过自动角点检测，直接用用户四角做透视校正。
-     * cornersArr = float[8] = TLx,TLy,TRx,TRy,BRx,BRy,BLx,BLy(归一化 0~1, 相对原图)。
-     */
-    private void runRecognitionWithCorners(android.net.Uri uri, float[] cornersArr) {
-        Log.i(TAG, "runRecognitionWithCorners: uri=" + uri);
-        ensureMokuLoaded(() -> {
-            runOnUiThread(() -> {
-                if (mokuProgressDialog != null) mokuProgressDialog.dismiss();
-                mokuProgressDialog = new AlertDialog.Builder(this)
-                        .setTitle(R.string.scan_board)
-                        .setMessage(R.string.scan_recognizing)
-                        .setCancelable(false)
-                        .show();
-            });
-            new Thread(() -> {
-                Exception err = null;
-                com.gosgf.app.util.MokuRecognizer.RecognitionResult result = null;
-                try {
-                    android.graphics.Bitmap bmp = loadBitmapFromUri(uri);
-                    if (bmp == null) throw new java.io.IOException("无法读取图片");
-                    // 归一化角点 → 本解码尺寸(与 CropActivity 解码尺寸可能不同)
-                    float[][] corners = new float[4][2];
-                    for (int i = 0; i < 4; i++) {
-                        corners[i][0] = cornersArr[i * 2] * bmp.getWidth();
-                        corners[i][1] = cornersArr[i * 2 + 1] * bmp.getHeight();
-                    }
-                    com.gosgf.app.util.RecognitionSettings rs =
-                            com.gosgf.app.util.RecognitionSettings.load(MainActivity.this);
-                    result = mokuRecognizer.recognizeWithCorners(bmp,
-                            com.gosgf.app.util.MokuRecognizer.DEFAULT_THRESHOLD, corners, rs);
-                } catch (Exception e) {
-                    err = e;
-                    Log.e(TAG, "四角校正识别异常: " + e.getClass().getSimpleName()
-                            + ": " + e.getMessage(), e);
-                }
-                final com.gosgf.app.util.MokuRecognizer.RecognitionResult r = result;
-                final Exception finalErr = err;
-                runOnUiThread(() -> {
-                    if (mokuProgressDialog != null) {
-                        mokuProgressDialog.dismiss();
-                        mokuProgressDialog = null;
-                    }
-                    if (finalErr != null) {
-                        Toast.makeText(this, getString(R.string.scan_failed, finalErr.getMessage()),
-                                Toast.LENGTH_LONG).show();
-                    } else {
-                        applyRecognitionResult(r);
-                    }
-                });
-            }).start();
-        });
-    }
-
-    /**
-     * 异步加载 moku-v3 模型：assets/moku.onnx。第一次使用时加载，之后复用。
-     * 加载完成后回调 onLoaded.run()。模型缺失会弹 Toast 提示。
-     *
-     * 关键:不再把 77MB 模型读到 Java 堆,而是先复制到 cacheDir,
-     * 用 OrtSession.createSession(path) 让 native 层 mmap,堆占用 ~0,
-     * 避免 OOM 崩溃(参见 readAssetBytes 旧实现引发的 OOM)。
-     */
-    private void ensureMokuLoaded(Runnable onLoaded) {
-        if (mokuRecognizer != null && mokuRecognizer.isReady()) {
-            onLoaded.run();
-            return;
-        }
-        if (mokuLoading) {
-            Toast.makeText(this, "模型加载中,请稍后", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        mokuLoading = true;
         mokuProgressDialog = new AlertDialog.Builder(this)
                 .setTitle(R.string.scan_board)
-                .setMessage("首次识别需加载模型(~77MB)...")
+                .setMessage(R.string.scan_recognizing)
                 .setCancelable(false)
                 .show();
-        mokuInitThread = new Thread(() -> {
-            String err = null;
+        new Thread(() -> {
+            Exception err = null;
+            com.gosgf.app.util.MokuRecognizer.RecognitionResult result = null;
             try {
-                java.io.File modelFile = copyAssetToCache("moku.onnx", "moku.onnx");
-                com.gosgf.app.util.MokuRecognizer r =
-                        new com.gosgf.app.util.MokuRecognizer();
-                r.init(modelFile.getAbsolutePath());
-                mokuRecognizer = r;
+                android.graphics.Bitmap bmp = loadBitmapFromUri(uri);
+                Log.i(TAG, "loadBitmapFromUri → " + (bmp == null ? "null" :
+                        (bmp.getWidth() + "x" + bmp.getHeight())));
+                if (bmp == null) throw new java.io.IOException("无法读取图片");
+                // 确保 ONNX 模型已加载 (与 kaya MokuDetector.init + detect 一致)
+                if (mokuRecognizer == null || !mokuRecognizer.isReady()) {
+                    ensureMokuLoaded();
+                }
+                if (mokuRecognizer == null || !mokuRecognizer.isReady()) {
+                    throw new IllegalStateException("模型加载失败");
+                }
+                result = mokuRecognizer.recognize(bmp);
             } catch (Exception e) {
-                err = e.getClass().getSimpleName() + ": " + e.getMessage();
+                err = e;
+                Log.e(TAG, "识别异常: " + e.getClass().getSimpleName()
+                        + ": " + e.getMessage(), e);
             }
-            final String errMsg = err;
+            final com.gosgf.app.util.MokuRecognizer.RecognitionResult r = result;
+            final Exception finalErr = err;
             runOnUiThread(() -> {
-                mokuLoading = false;
                 if (mokuProgressDialog != null) {
                     mokuProgressDialog.dismiss();
                     mokuProgressDialog = null;
                 }
-                if (errMsg != null) {
-                    Toast.makeText(this,
-                            "模型加载失败: " + errMsg + "（请检查 assets/moku.onnx 是否存在）",
+                if (finalErr != null) {
+                    Toast.makeText(this, getString(R.string.scan_failed, finalErr.getMessage()),
                             Toast.LENGTH_LONG).show();
                 } else {
-                    onLoaded.run();
+                    applyRecognitionResult(r);
                 }
             });
-        }, "moku-init");
-        mokuInitThread.start();
+        }).start();
     }
 
-    /**
-     * 把 assets 中的文件复制到 cacheDir 并返回目标文件。
-     * 已存在且大小匹配则跳过,避免每次启动都复制 77MB。
-     */
-    private java.io.File copyAssetToCache(String assetName, String destName)
-            throws java.io.IOException {
-        java.io.File outFile = new java.io.File(getCacheDir(), destName);
-        long assetLen = getAssets().openFd(assetName).getLength();
-        // 已存在且大小匹配 → 直接复用
-        if (outFile.exists() && outFile.length() == assetLen) {
-            android.util.Log.i("MainActivity",
-                    "Moku 模型缓存复用: " + outFile + " (" + assetLen + "B)");
-            return outFile;
+    /** 加载 ONNX 模型 (从 assets/moku.onnx 复制到 cache 后初始化 MokuRecognizer)。 */
+    private void ensureMokuLoaded() {
+        if (mokuRecognizer != null && mokuRecognizer.isReady()) return;
+        try {
+            java.io.File cacheFile = new java.io.File(getCacheDir(), "moku.onnx");
+            if (!cacheFile.exists() || cacheFile.length() == 0) {
+                try (java.io.InputStream is = getAssets().open("moku.onnx");
+                     java.io.FileOutputStream fos = new java.io.FileOutputStream(cacheFile)) {
+                    byte[] buf = new byte[8192];
+                    int n;
+                    while ((n = is.read(buf)) > 0) fos.write(buf, 0, n);
+                }
+                Log.i(TAG, "ONNX 模型已复制到 cache: " + cacheFile.length() + " bytes");
+            }
+            mokuRecognizer = new com.gosgf.app.util.MokuRecognizer();
+            mokuRecognizer.init(cacheFile.getAbsolutePath());
+            Log.i(TAG, "MokuRecognizer 初始化完成");
+        } catch (Exception e) {
+            Log.e(TAG, "ensureMokuLoaded 失败: " + e.getMessage(), e);
+            mokuRecognizer = null;
         }
-        android.util.Log.i("MainActivity",
-                "复制 Moku 模型 assets→cache: " + assetLen + "B");
-        try (java.io.InputStream in = getAssets().open(assetName);
-             java.io.OutputStream out = new java.io.FileOutputStream(outFile)) {
-            byte[] buf = new byte[8192];
-            int n;
-            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
-        }
-        return outFile;
     }
 
     /**
@@ -1233,23 +1074,59 @@ import java.util.Locale;
             android.util.Log.w("MainActivity", "decode bounds 失败: " + e.getMessage());
             return null;
         }
-        int maxEdge = 1600; // 识别精度足够,且避免 OOM
+        int maxEdge = 2560; // 提高分辨率，保留棋子细节避免压缩失真
         int sample = 1;
         while (opts.outWidth / sample > maxEdge || opts.outHeight / sample > maxEdge) {
             sample *= 2;
         }
-        // 第二遍:真解码,带 inSampleSize + inPreferredConfig RGB_565 省内存
+        // 第二遍:真解码,带 inSampleSize。用 ARGB_8888(8bit RGB,与 Kaya 的
+        // RGBA 像素缓冲一致;RGB_565 只有 5/6bit 色深,棋子/棋盘线颜色会失真,
+        // 导致识别结果与 Kaya 不一致)
         android.graphics.BitmapFactory.Options dec =
                 new android.graphics.BitmapFactory.Options();
         dec.inSampleSize = sample;
-        dec.inPreferredConfig = android.graphics.Bitmap.Config.RGB_565;
+        dec.inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888;
+        android.graphics.Bitmap bmp;
         try (java.io.InputStream in2 = getContentResolver().openInputStream(uri)) {
             if (in2 == null) return null;
-            return android.graphics.BitmapFactory.decodeStream(in2, null, dec);
+            bmp = android.graphics.BitmapFactory.decodeStream(in2, null, dec);
         } catch (Exception e) {
             android.util.Log.w("MainActivity", "decode 失败: " + e.getMessage());
             return null;
         }
+        if (bmp == null) return null;
+
+        // EXIF 方向:照片 JPEG 常带 Orientation(竖拍=ROTATE_90/270)。
+        // Kaya Web 端 createImageBitmap 会自动应用 EXIF, 而 decodeStream 不会——
+        // 不旋转会导致竖拍照片方向错误、棋盘识别整体错位, 必须与 Kaya 对齐。
+        int rotation = 0;
+        try (java.io.InputStream exifIn = getContentResolver().openInputStream(uri)) {
+            if (exifIn != null) {
+                android.media.ExifInterface exif = new android.media.ExifInterface(exifIn);
+                switch (exif.getAttributeInt(android.media.ExifInterface.TAG_ORIENTATION,
+                        android.media.ExifInterface.ORIENTATION_NORMAL)) {
+                    case android.media.ExifInterface.ORIENTATION_ROTATE_90:
+                        rotation = 90; break;
+                    case android.media.ExifInterface.ORIENTATION_ROTATE_180:
+                        rotation = 180; break;
+                    case android.media.ExifInterface.ORIENTATION_ROTATE_270:
+                        rotation = 270; break;
+                    default: break;
+                }
+            }
+        } catch (Exception e) {
+            android.util.Log.w("MainActivity", "EXIF 读取失败(按无旋转处理): " + e.getMessage());
+        }
+        if (rotation != 0) {
+            android.graphics.Matrix m = new android.graphics.Matrix();
+            m.postRotate(rotation);
+            android.graphics.Bitmap rotated = android.graphics.Bitmap.createBitmap(
+                    bmp, 0, 0, bmp.getWidth(), bmp.getHeight(), m, true);
+            if (rotated != bmp) bmp.recycle();
+            bmp = rotated;
+            android.util.Log.i("MainActivity", "应用 EXIF 旋转 " + rotation + "°");
+        }
+        return bmp;
     }
 
     // 旧的 readAll/readAssetBytes 已被流式实现替代,删除避免误用。
@@ -1936,15 +1813,7 @@ import java.util.Locale;
         estimateToken = -1;
         lastEstimateDialog = null;
         lastEstimateLeadView = null;
-        // 拍照识别：等待模型加载线程结束 + 释放 ONNX session
-        if (mokuInitThread != null) {
-            try { mokuInitThread.join(2000); } catch (InterruptedException ignored) {}
-            mokuInitThread = null;
-        }
-        if (mokuRecognizer != null) {
-            mokuRecognizer.close();
-            mokuRecognizer = null;
-        }
+        // 拍照识别：释放进度弹窗
         if (mokuProgressDialog != null) {
             mokuProgressDialog.dismiss();
             mokuProgressDialog = null;
