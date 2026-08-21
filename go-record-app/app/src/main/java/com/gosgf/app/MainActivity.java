@@ -130,6 +130,8 @@ import java.util.Locale;
     private static final String PREF_THREADS = "katago_threads";
     private static final String PREF_MODEL_PATH = "katago_model_path"; // 用户选定的模型绝对路径
     private static final String PREF_AUTO_ANALYZE = "katago_auto_analyze"; // 全自动分析开关
+    /** 死活模式:dynamicPlayoutDoublingAdvantageCapPerOppLead=0.0, 不随优势降搜索量 */
+    private static final String PREF_TSUME_MODE = "katago_tsume_mode";
     // 分析强度档位 → 实际 maxVisits（EIGEN 纯 CPU 下档位越低越快；AGM H6 等低端机用低档）
     private static final int[] STRENGTH_VISITS = {50, 100, 200, 400, 800};
     private static final String[] KOMI_VALUES = {"7.5", "6.5", "0.5", "5.5", "0.0"};
@@ -575,16 +577,22 @@ import java.util.Locale;
         Switch switchAutoAnalyze = view.findViewById(R.id.switch_auto_analyze);
         switchAutoAnalyze.setChecked(katagoPrefs.getBoolean(PREF_AUTO_ANALYZE, false));
 
+        // 死活模式开关
+        Switch switchTsume = view.findViewById(R.id.switch_tsume_mode);
+        switchTsume.setChecked(katagoPrefs.getBoolean(PREF_TSUME_MODE, false));
+
         new AlertDialog.Builder(this)
                 .setView(view)
                 .setPositiveButton(android.R.string.ok, (d, w) -> {
                     boolean auto = switchAutoAnalyze.isChecked();
+                    boolean tsume = switchTsume.isChecked();
                     katagoPrefs.edit()
                             .putInt(PREF_MAX_VISITS, seekStrength.getProgress())
                             .putInt(PREF_TOP_N, seekTopN.getProgress())
                             .putString(PREF_KOMI, KOMI_VALUES[spinnerKomi.getSelectedItemPosition()])
                             .putInt(PREF_THREADS, THREAD_VALUES[spinnerThreads.getSelectedItemPosition()])
                             .putBoolean(PREF_AUTO_ANALYZE, auto)
+                            .putBoolean(PREF_TSUME_MODE, tsume)
                             .apply();
                     autoAnalyze = auto;
                     // 立即把设置中的贴目同步到棋盘，使估算口径随之更新
@@ -702,11 +710,12 @@ import java.util.Locale;
                 int topN = katagoPrefs.getInt(PREF_TOP_N, 5);
                 boolean includePolicy = true;
                 double komi = Double.parseDouble(katagoPrefs.getString(PREF_KOMI, "7.5"));
+                boolean tsumeMode = katagoPrefs.getBoolean(PREF_TSUME_MODE, false);
                 // 同步设置中的贴目到棋盘（ScoreEstimator），使落子瞬间的启发式兜底
                 // 与 KataGo 引擎使用同一贴目，避免覆盖时因贴目不一致而跳变。
                 board.setKomi((float) komi);
 
-                AnalysisResult result = katagoEngine.analyze(boardState, boardSize, maxVisits, who, komi, threads, includePolicy);
+                AnalysisResult result = katagoEngine.analyze(boardState, boardSize, maxVisits, who, komi, threads, includePolicy, tsumeMode);
 
                 // 保存引擎计算结果（以引擎为准，相对当前行棋方），用于步数行末显示
                 lastWinrate = result.rootWinrate;
@@ -1843,6 +1852,7 @@ import java.util.Locale;
         final int strengthIdx = katagoPrefs.getInt(PREF_MAX_VISITS, 1);
         // visits 比实时分析（≤100）更高，但封顶 200 以确保 2 秒内返回
         final int estVisits = Math.min(STRENGTH_VISITS[strengthIdx] * 3, 200);
+        final boolean tsumeMode = katagoPrefs.getBoolean(PREF_TSUME_MODE, false);
 
         new Thread(() -> {
             // 引擎忙时短等，争取一次真正的计算机会（不阻塞 UI）
@@ -1854,7 +1864,7 @@ import java.util.Locale;
             try {
                 if (engineBusy) return; // 仍忙，保留启发式结果
                 KataGoEngine.AnalysisResult r = katagoEngine.analyze(
-                        snapshot, boardSize, estVisits, nextPlayer, komi, threads, false);
+                        snapshot, boardSize, estVisits, nextPlayer, komi, threads, false, tsumeMode);
                 if (r != null) {
                     // rootScoreLead 为「当前行棋方」领先目数，折算为相对黑方
                     correction[0] = blackToMove ? r.rootScoreLead : -r.rootScoreLead;

@@ -151,7 +151,7 @@ public class KataGoEngine {
     public synchronized AnalysisResult analyze(int[][] boardState, int boardSize, int maxVisits,
                                                  int nextPlayer, double komi, int numThreads)
             throws IOException, JSONException {
-        return analyze(boardState, boardSize, maxVisits, nextPlayer, komi, numThreads, true);
+        return analyze(boardState, boardSize, maxVisits, nextPlayer, komi, numThreads, true, false);
     }
 
     /**
@@ -161,6 +161,19 @@ public class KataGoEngine {
     public synchronized AnalysisResult analyze(int[][] boardState, int boardSize, int maxVisits,
                                                  int nextPlayer, double komi, int numThreads,
                                                  boolean includePolicy)
+            throws IOException, JSONException {
+        return analyze(boardState, boardSize, maxVisits, nextPlayer, komi, numThreads, includePolicy, false);
+    }
+
+    /**
+     * 分析当前局面。
+     * @param includePolicy 是否请求策略输出。估算场景关闭可显著减少引擎计算量（秒出）。
+     * @param tsumeMode 死活模式: true → dynamicPlayoutDoublingAdvantageCapPerOppLead = 0.0,
+     *                  不随优势降低搜索量, 死活/官子算得更清。false → 普通对局默认。
+     */
+    public synchronized AnalysisResult analyze(int[][] boardState, int boardSize, int maxVisits,
+                                                 int nextPlayer, double komi, int numThreads,
+                                                 boolean includePolicy, boolean tsumeMode)
             throws IOException, JSONException {
 
         if (!initialized) throw new IOException("引擎尚未初始化，请先调用 prepare()");
@@ -176,6 +189,11 @@ public class KataGoEngine {
         req.put("includePolicy", includePolicy);
         req.put("includeOwnership", false);
         req.put("initialPlayer", nextPlayer == GoBoard.WHITE ? "W" : "B");
+
+        // 死活模式: 不随优势减少每步展开的 playout 数量，避免大优势下因展开不足而漏死活、漏官子
+        if (tsumeMode) {
+            req.put("dynamicPlayoutDoublingAdvantageCapPerOppLead", 0.0);
+        }
 
         // 直接发送当前棋盘所有棋子，让引擎端 parseBoard 精确重建局面
         StringBuilder stones = new StringBuilder();
