@@ -71,6 +71,8 @@ public class MokuRecognizer {
         public int blackCount;
         public int whiteCount;
         public String message;
+        /** 使用的棋盘四角(原图像素坐标, 顺序 TL→TR→BR→BL), 自动检测或手动注入。 */
+        public float[][] corners;
     }
 
     public MokuRecognizer() {
@@ -199,7 +201,7 @@ public class MokuRecognizer {
             Log.i(TAG, "手动裁剪图:跳过阶段2自动再裁剪, 直接整图 TTA 识别(保边角)");
             RecognitionResult rr = postprocessWithTTA(out1, bitmap, pp1, srcW, srcH, threshold,
                     true, rs);
-            return maybeRetry(rawBitmap, rr, threshold, rs);
+            return maybeRetry(rawBitmap, rr, threshold, rs, null);
         }
 
         // 棋子 bbox 覆盖范围足够小 (棋盘只占图像一部分) → 自动裁剪 + 重新推理
@@ -207,7 +209,7 @@ public class MokuRecognizer {
         if (bbox == null) {
             Log.i(TAG, "阶段 1 未检测到棋子, 直接后处理+TTA");
             RecognitionResult r1 = postprocessWithTTA(out1, bitmap, pp1, srcW, srcH, threshold, rs);
-            return maybeRetry(rawBitmap, r1, threshold, rs);
+            return maybeRetry(rawBitmap, r1, threshold, rs, null);
         }
 
         float minX = bbox[0], minY = bbox[1], maxX = bbox[2], maxY = bbox[3];
@@ -254,22 +256,87 @@ public class MokuRecognizer {
 
         RecognitionResult result = postprocessWithTTA(out2, cropped, pp2, cropW, cropH, threshold, rs);
         Log.i(TAG, "两阶段识别完成 (自动裁剪 " + cropW + "x" + cropH + " + TTA)");
-        return maybeRetry(rawBitmap, result, threshold, rs);
+        return maybeRetry(rawBitmap, result, threshold, rs, null);
+    }
+
+    /**
+     * 手动指定棋盘四角识别(透视校正):
+     * 用户拖拽四角对准棋盘四个角后,跳过自动角点检测,直接用给定四角计算 H 矩阵。
+     * 适用于透视变形(照片里棋盘不是正四边形)的拍照。
+     *
+     * @param corners 棋盘四角(原图像素坐标, 顺序 TL→TR→BR→BL)
+     */
+    public RecognitionResult recognizeWithCorners(Bitmap bitmap, float threshold,
+                                                  float[][] corners,
+                                                  RecognitionSettings rs) throws Exception {
+        if (session == null) throw new IllegalStateException("MokuRecognizer 未初始化");
+        this.settings = (rs != null) ? rs : new RecognitionSettings();
+        final Bitmap rawBitmap = bitmap; // 低阈值重试用原始图
+
+        int srcW = bitmap.getWidth();
+        int srcH = bitmap.getHeight();
+        Log.i(TAG, "=== 识别开始(手动四角) === src=" + srcW + "x" + srcH
+                + ", threshold=" + threshold);
+
+        // 内存保护缩放(与 recognize 一致)。若发生缩放,注入角点需按同一比例映射。
+        float scale = 1f;
+        final int MAX_DIM = 2560;
+        if (Math.max(srcW, srcH) > MAX_DIM) {
+            float ds = (float) MAX_DIM / Math.max(srcW, srcH);
+            int nw = Math.round(srcW * ds);
+            int nh = Math.round(srcH * ds);
+            bitmap = Bitmap.createScaledBitmap(bitmap, nw, nh, true);
+            srcW = nw;
+            srcH = nh;
+            scale = ds;
+            Log.d(TAG, "大图内存保护缩放: → " + srcW + "x" + srcH);
+        }
+
+        // 图像增强:对比度拉伸(不改尺寸),改善光照不均/低对比度
+        bitmap = enhanceContrast(bitmap);
+        srcW = bitmap.getWidth();
+        srcH = bitmap.getHeight();
+
+        // 把用户角点映射到(可能被缩放的)识别图坐标系
+        float[][] scaledCorners = new float[4][2];
+        for (int i = 0; i < 4; i++) {
+            scaledCorners[i][0] = corners[i][0] * scale;
+            scaledCorners[i][1] = corners[i][1] * scale;
+        }
+        Log.d(TAG, "手动四角注入: "
+                + String.format("TL(%.0f,%.0f) TR(%.0f,%.0f) BR(%.0f,%.0f) BL(%.0f,%.0f)",
+                    scaledCorners[0][0], scaledCorners[0][1],
+                    scaledCorners[1][0], scaledCorners[1][1],
+                    scaledCorners[2][0], scaledCorners[2][1],
+                    scaledCorners[3][0], scaledCorners[3][1]));
+
+        // 整图 TTA + 注入角点(用户已指定棋盘范围,不做阶段 2 自动再裁剪)
+        PreprocessResult pp1 = preprocess(bitmap, srcW, srcH);
+        float[][] out1 = runInference(pp1.input);
+        RecognitionResult rr = postprocessWithTTA(out1, bitmap, pp1, srcW, srcH, threshold,
+                false, rs, scaledCorners);
+        // 重试传原始角点(未缩放):重试路径内部会再做一次同比例缩放,避免二次缩放错位
+        return maybeRetry(rawBitmap, rr, threshold, rs, corners);
     }
 
     /**
      * 全空重试:高阈值(抗误检)漏检导致一个棋子都没识别到时,
      * 用较低阈值(保召回)对原始图重新识别一次。低阈值结果不再重试,避免死循环。
+     * @param extCorners 手动注入的四角(可能为 null=自动检测),重试时保持一致。
      */
     private RecognitionResult maybeRetry(Bitmap rawBitmap,
                                          RecognitionResult result, float threshold,
-                                         RecognitionSettings rs) {
+                                         RecognitionSettings rs,
+                                         float[][] extCorners) {
         if (threshold > LOW_RETRY_THRESHOLD
                 && result != null
                 && result.blackCount + result.whiteCount == 0) {
             Log.w(TAG, "高阈值(" + threshold + ")未识别到任何棋子, 用低阈值("
                     + LOW_RETRY_THRESHOLD + ")重试");
             try {
+                if (extCorners != null) {
+                    return recognizeWithCorners(rawBitmap, LOW_RETRY_THRESHOLD, extCorners, rs);
+                }
                 return recognize(rawBitmap, LOW_RETRY_THRESHOLD, rs);
             } catch (Exception e) {
                 Log.e(TAG, "低阈值重试失败, 返回原空结果", e);
@@ -327,7 +394,7 @@ public class MokuRecognizer {
                                                   PreprocessResult pp, int imgW, int imgH,
                                                   float threshold,
                                                   RecognitionSettings rs) throws Exception {
-        return postprocessWithTTA(out, bmp, pp, imgW, imgH, threshold, false, rs);
+        return postprocessWithTTA(out, bmp, pp, imgW, imgH, threshold, false, rs, null);
     }
 
     private RecognitionResult postprocessWithTTA(float[][] out, Bitmap bmp,
@@ -335,6 +402,16 @@ public class MokuRecognizer {
                                                   float threshold,
                                                   boolean uniformGrid,
                                                   RecognitionSettings rs) throws Exception {
+        return postprocessWithTTA(out, bmp, pp, imgW, imgH, threshold, uniformGrid, rs, null);
+    }
+
+    /** @param externalCorners 手动注入的棋盘四角(原图像素, TL→TR→BR→BL), 非 null 时跳过自动角点检测。 */
+    private RecognitionResult postprocessWithTTA(float[][] out, Bitmap bmp,
+                                                  PreprocessResult pp, int imgW, int imgH,
+                                                  float threshold,
+                                                  boolean uniformGrid,
+                                                  RecognitionSettings rs,
+                                                  float[][] externalCorners) throws Exception {
         long tStart = System.currentTimeMillis();
         int nLogit = NUM_QUERIES * NUM_CLASSES;
         int nBox = NUM_QUERIES * 4;
@@ -394,7 +471,7 @@ public class MokuRecognizer {
         Log.i(TAG, "4 路 TTA 完成: 4×" + NUM_QUERIES + " = " + (NUM_QUERIES * NUM_VARIANTS)
                 + " query 合并, 总耗时" + (System.currentTimeMillis() - tStart) + "ms");
         return postprocess(combinedLogits, combinedBoxes, imgW, imgH, threshold, bmp, pp.lb,
-                NUM_QUERIES * NUM_VARIANTS, uniformGrid, rs);
+                NUM_QUERIES * NUM_VARIANTS, uniformGrid, rs, externalCorners);
     }
 
     /**
@@ -652,7 +729,7 @@ public class MokuRecognizer {
                                                   LetterboxInfo lb,
                                                   RecognitionSettings rs) {
         return postprocess(logits, predBoxes, imgW, imgH, threshold, srcBmp, lb,
-                NUM_QUERIES, rs);
+                NUM_QUERIES, false, rs, null);
     }
 
     private static RecognitionResult postprocess(float[] logits, float[] predBoxes,
@@ -661,7 +738,7 @@ public class MokuRecognizer {
                                                   LetterboxInfo lb, int numQueries,
                                                   RecognitionSettings rs) {
         return postprocess(logits, predBoxes, imgW, imgH, threshold, srcBmp, lb,
-                numQueries, false, rs);
+                numQueries, false, rs, null);
     }
 
     private static RecognitionResult postprocess(float[] logits, float[] predBoxes,
@@ -670,6 +747,18 @@ public class MokuRecognizer {
                                                   LetterboxInfo lb, int numQueries,
                                                   boolean uniformGrid,
                                                   RecognitionSettings rs) {
+        return postprocess(logits, predBoxes, imgW, imgH, threshold, srcBmp, lb,
+                numQueries, uniformGrid, rs, null);
+    }
+
+    /** @param externalCorners 手动注入的棋盘四角(原图像素, TL→TR→BR→BL), 非 null 时跳过自动角点检测。 */
+    private static RecognitionResult postprocess(float[] logits, float[] predBoxes,
+                                                  int imgW, int imgH, float threshold,
+                                                  android.graphics.Bitmap srcBmp,
+                                                  LetterboxInfo lb, int numQueries,
+                                                  boolean uniformGrid,
+                                                  RecognitionSettings rs,
+                                                  float[][] externalCorners) {
         List<Detection> stones = new ArrayList<>();
         List<Detection> cornerCandidates = new ArrayList<>();
         // 临界棋子:score 在 [threshold*0.5, threshold) 之间,差一点就过阈值
@@ -817,6 +906,7 @@ public class MokuRecognizer {
             if (recovered > 0) Log.i(TAG, "漏检恢复(均匀网格): 补回 " + recovered + " 个棋子");
             int reviewU = fullBoardReview(srcBmp, corners, out.board, rs);
             if (reviewU > 0) Log.i(TAG, "全棋盘复核(均匀网格): 改动 " + reviewU + " 格");
+            out.corners = corners;
             out.cornersDetected = true;
             out.blackCount = countColor(out.board, BLACK);
             out.whiteCount = countColor(out.board, WHITE);
@@ -825,7 +915,8 @@ public class MokuRecognizer {
         }
 
         // 角点不足 2 个：使用图像边缘 5% 内缩作为 fallback，且放弃棋子识别
-        if (cornerCandidates.size() < 2) {
+        // (手动注入角点时跳过此 fallback)
+        if (externalCorners == null && cornerCandidates.size() < 2) {
             float[][] corners = insetImageCorners(imgW, imgH, 0.05f);
             Log.w(TAG, "角点不足 2 个, 使用图像内缩 fallback: "
                     + corners[0][0] + "," + corners[0][1] + " ...");
@@ -842,6 +933,7 @@ public class MokuRecognizer {
             if (recovered > 0) Log.i(TAG, "漏检恢复(角不足路径): 补回 " + recovered + " 个棋子");
             int reviewF = fullBoardReview(srcBmp, corners, out.board, rs);
             if (reviewF > 0) Log.i(TAG, "全棋盘复核(角不足路径): 改动 " + reviewF + " 格");
+            out.corners = corners;
             out.cornersDetected = false;
             out.blackCount = countColor(out.board, BLACK);
             out.whiteCount = countColor(out.board, WHITE);
@@ -849,49 +941,59 @@ public class MokuRecognizer {
             return out;
         }
 
-        // 2 角:推断另外 2 个 (对角或邻边假设)
-        // 3 角:平行四边形补全
-        // ≥4 角:取 top 4
-        float[][] top4 = pickTop4Corners(cornerCandidates, imgW, imgH);
-        Log.d(TAG, "pickTop4Corners(输入" + cornerCandidates.size() + "角) → "
-                + String.format("(%.0f,%.0f)-(%.0f,%.0f)-(%.0f,%.0f)-(%.0f,%.0f)",
-                    top4[0][0], top4[0][1], top4[1][0], top4[1][1],
-                    top4[2][0], top4[2][1], top4[3][0], top4[3][1]));
-
-        // 顺时针排序 TL→TR→BR→BL
-        float[][] corners = orderCorners(top4);
-        Log.d(TAG, "orderCorners TL→TR→BR→BL: "
-                + String.format("TL(%.0f,%.0f) TR(%.0f,%.0f) BR(%.0f,%.0f) BL(%.0f,%.0f)",
-                    corners[0][0], corners[0][1], corners[1][0], corners[1][1],
-                    corners[2][0], corners[2][1], corners[3][0], corners[3][1]));
-
-        // 4 角覆盖范围检查:4 角 bbox 面积应该至少占图像 30%
-        // (棋盘正常应占画面大部分;若 4 角挤在小区域,说明模型把棋盘内部点
-        //  当成 corner,H 矩阵只覆盖小区域,外围棋子会全部越界)
-        float covRatio = computeCornerCoverageRatio(corners, imgW, imgH);
-        Log.d(TAG, String.format("4 角覆盖范围: bbox 占图像 %.1f%% (阈值 30%%)", covRatio * 100));
-
-        // 4 角使用策略(模型检测到的真实 4 角优先,保证边角精度;仅在不可信时回退):
-        // 1. 覆盖充足(≥70%) 且 非退化(无重合/非共线/近似矩形):用模型 4 角
-        // 2. 退化 或 覆盖不足(<30%) 或 覆盖足但退化:降级用棋子 bbox 拟合(数据驱动网格)
-        boolean degenerate = areCornersDegenerate(corners, imgW, imgH);
-        if (covRatio >= 0.70f && !degenerate) {
-            Log.d(TAG, String.format("4 角可信(覆盖%.1f%% 且非退化), 使用模型检测的真实 4 角",
-                    covRatio * 100));
-            // 保留 orderCorners(top4) 的结果
+        float[][] corners;
+        if (externalCorners != null) {
+            // 手动注入四角(用户拖动校正):信任用户指定范围,跳过自动检测与覆盖/退化降级
+            corners = externalCorners;
+            Log.i(TAG, "手动注入 4 角(用户校正): "
+                    + String.format("TL(%.0f,%.0f) TR(%.0f,%.0f) BR(%.0f,%.0f) BL(%.0f,%.0f)",
+                        corners[0][0], corners[0][1], corners[1][0], corners[1][1],
+                        corners[2][0], corners[2][1], corners[3][0], corners[3][1]));
         } else {
-            if (degenerate) {
-                Log.w(TAG, "4 角退化(重合/共线/非矩形), 降级为棋子 bbox 拟合网格(H不再算,保住已检棋子)");
-            } else {
-                Log.w(TAG, String.format("4 角覆盖范围过小(%.1f%% < 30%%), 降级为棋子 bbox 拟合网格",
+            // 2 角:推断另外 2 个 (对角或邻边假设)
+            // 3 角:平行四边形补全
+            // ≥4 角:取 top 4
+            float[][] top4 = pickTop4Corners(cornerCandidates, imgW, imgH);
+            Log.d(TAG, "pickTop4Corners(输入" + cornerCandidates.size() + "角) → "
+                    + String.format("(%.0f,%.0f)-(%.0f,%.0f)-(%.0f,%.0f)-(%.0f,%.0f)",
+                        top4[0][0], top4[0][1], top4[1][0], top4[1][1],
+                        top4[2][0], top4[2][1], top4[3][0], top4[3][1]));
+
+            // 顺时针排序 TL→TR→BR→BL
+            corners = orderCorners(top4);
+            Log.d(TAG, "orderCorners TL→TR→BR→BL: "
+                    + String.format("TL(%.0f,%.0f) TR(%.0f,%.0f) BR(%.0f,%.0f) BL(%.0f,%.0f)",
+                        corners[0][0], corners[0][1], corners[1][0], corners[1][1],
+                        corners[2][0], corners[2][1], corners[3][0], corners[3][1]));
+
+            // 4 角覆盖范围检查:4 角 bbox 面积应该至少占图像 30%
+            // (棋盘正常应占画面大部分;若 4 角挤在小区域,说明模型把棋盘内部点
+            //  当成 corner,H 矩阵只覆盖小区域,外围棋子会全部越界)
+            float covRatio = computeCornerCoverageRatio(corners, imgW, imgH);
+            Log.d(TAG, String.format("4 角覆盖范围: bbox 占图像 %.1f%% (阈值 30%%)", covRatio * 100));
+
+            // 4 角使用策略(模型检测到的真实 4 角优先,保证边角精度;仅在不可信时回退):
+            // 1. 覆盖充足(≥70%) 且 非退化(无重合/非共线/近似矩形):用模型 4 角
+            // 2. 退化 或 覆盖不足(<30%) 或 覆盖足但退化:降级用棋子 bbox 拟合(数据驱动网格)
+            boolean degenerate = areCornersDegenerate(corners, imgW, imgH);
+            if (covRatio >= 0.70f && !degenerate) {
+                Log.d(TAG, String.format("4 角可信(覆盖%.1f%% 且非退化), 使用模型检测的真实 4 角",
                         covRatio * 100));
+                // 保留 orderCorners(top4) 的结果
+            } else {
+                if (degenerate) {
+                    Log.w(TAG, "4 角退化(重合/共线/非矩形), 降级为棋子 bbox 拟合网格(H不再算,保住已检棋子)");
+                } else {
+                    Log.w(TAG, String.format("4 角覆盖范围过小(%.1f%% < 30%%), 降级为棋子 bbox 拟合网格",
+                            covRatio * 100));
+                }
+                corners = fitUniformGridCorners(stones, imgW, imgH);
             }
-            corners = fitUniformGridCorners(stones, imgW, imgH);
+            Log.d(TAG, "最终使用 4 角: "
+                    + String.format("TL(%.0f,%.0f) TR(%.0f,%.0f) BR(%.0f,%.0f) BL(%.0f,%.0f)",
+                        corners[0][0], corners[0][1], corners[1][0], corners[1][1],
+                        corners[2][0], corners[2][1], corners[3][0], corners[3][1]));
         }
-        Log.d(TAG, "最终使用 4 角: "
-                + String.format("TL(%.0f,%.0f) TR(%.0f,%.0f) BR(%.0f,%.0f) BL(%.0f,%.0f)",
-                    corners[0][0], corners[0][1], corners[1][0], corners[1][1],
-                    corners[2][0], corners[2][1], corners[3][0], corners[3][1]));
 
         // 颜色二次验证:采样棋子中心区域像素,验证模型黑白判断
         // 修正明显的颜色错误(模型把黑当白或反之)
@@ -915,6 +1017,7 @@ public class MokuRecognizer {
         int reviewM = fullBoardReview(srcBmp, corners, out.board, rs);
         if (reviewM > 0) Log.i(TAG, "全棋盘复核(主路径): 改动 " + reviewM + " 格");
 
+        out.corners = corners;
         out.cornersDetected = true;
         out.blackCount = countColor(out.board, BLACK);
         out.whiteCount = countColor(out.board, WHITE);

@@ -306,6 +306,17 @@ import java.util.Locale;
             result -> {
                 Log.i(TAG, "cropActivityLauncher 回调: resultCode=" + result.getResultCode());
                 if (result.getResultCode() == RESULT_OK && result.getData() != null) {
+                    // 四角校正模式:回传原图 + 用户摆好的四角 → 用四角做透视校正识别
+                    float[] cornersArr = result.getData()
+                            .getFloatArrayExtra(CropActivity.EXTRA_CORNERS);
+                    if (cornersArr != null && cornersArr.length == 8) {
+                        String imgUri = result.getData()
+                                .getStringExtra(CropActivity.EXTRA_IMAGE_URI);
+                        if (imgUri != null) {
+                            runRecognitionWithCorners(android.net.Uri.parse(imgUri), cornersArr);
+                            return;
+                        }
+                    }
                     String cropUri = result.getData()
                             .getStringExtra(CropActivity.EXTRA_CROP_URI);
                     if (cropUri != null) {
@@ -1052,6 +1063,61 @@ import java.util.Locale;
                 } catch (Exception e) {
                     err = e;
                     Log.e(TAG, "识别异常: " + e.getClass().getSimpleName()
+                            + ": " + e.getMessage(), e);
+                }
+                final com.gosgf.app.util.MokuRecognizer.RecognitionResult r = result;
+                final Exception finalErr = err;
+                runOnUiThread(() -> {
+                    if (mokuProgressDialog != null) {
+                        mokuProgressDialog.dismiss();
+                        mokuProgressDialog = null;
+                    }
+                    if (finalErr != null) {
+                        Toast.makeText(this, getString(R.string.scan_failed, finalErr.getMessage()),
+                                Toast.LENGTH_LONG).show();
+                    } else {
+                        applyRecognitionResult(r);
+                    }
+                });
+            }).start();
+        });
+    }
+
+    /**
+     * 四角校正识别：用户已在裁剪页把四角拖到棋盘四个角(透视变形场景)，
+     * 识别侧跳过自动角点检测，直接用用户四角做透视校正。
+     * cornersArr = float[8] = TLx,TLy,TRx,TRy,BRx,BRy,BLx,BLy(归一化 0~1, 相对原图)。
+     */
+    private void runRecognitionWithCorners(android.net.Uri uri, float[] cornersArr) {
+        Log.i(TAG, "runRecognitionWithCorners: uri=" + uri);
+        ensureMokuLoaded(() -> {
+            runOnUiThread(() -> {
+                if (mokuProgressDialog != null) mokuProgressDialog.dismiss();
+                mokuProgressDialog = new AlertDialog.Builder(this)
+                        .setTitle(R.string.scan_board)
+                        .setMessage(R.string.scan_recognizing)
+                        .setCancelable(false)
+                        .show();
+            });
+            new Thread(() -> {
+                Exception err = null;
+                com.gosgf.app.util.MokuRecognizer.RecognitionResult result = null;
+                try {
+                    android.graphics.Bitmap bmp = loadBitmapFromUri(uri);
+                    if (bmp == null) throw new java.io.IOException("无法读取图片");
+                    // 归一化角点 → 本解码尺寸(与 CropActivity 解码尺寸可能不同)
+                    float[][] corners = new float[4][2];
+                    for (int i = 0; i < 4; i++) {
+                        corners[i][0] = cornersArr[i * 2] * bmp.getWidth();
+                        corners[i][1] = cornersArr[i * 2 + 1] * bmp.getHeight();
+                    }
+                    com.gosgf.app.util.RecognitionSettings rs =
+                            com.gosgf.app.util.RecognitionSettings.load(MainActivity.this);
+                    result = mokuRecognizer.recognizeWithCorners(bmp,
+                            com.gosgf.app.util.MokuRecognizer.DEFAULT_THRESHOLD, corners, rs);
+                } catch (Exception e) {
+                    err = e;
+                    Log.e(TAG, "四角校正识别异常: " + e.getClass().getSimpleName()
                             + ": " + e.getMessage(), e);
                 }
                 final com.gosgf.app.util.MokuRecognizer.RecognitionResult r = result;
