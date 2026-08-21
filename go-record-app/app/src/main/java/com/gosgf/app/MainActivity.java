@@ -87,7 +87,7 @@ import java.util.Locale;
     private android.net.Uri pendingCameraUri = null;
     private ActivityResultLauncher<Intent> cameraLauncher;
     private ActivityResultLauncher<Intent> galleryLauncher;
-    private ActivityResultLauncher<Intent> cropLauncher;
+    private ActivityResultLauncher<Intent> cornerAdjustLauncher;
     private com.gosgf.app.util.MokuRecognizer mokuRecognizer = null;
     private AlertDialog mokuProgressDialog = null;
 
@@ -266,19 +266,19 @@ import java.util.Locale;
             }
         );
 
-        // 拍照识别：相机
+        // 拍照识别：相机 → 直接进入角点调整(原图上, 不再裁剪)
         cameraLauncher = registerForActivityResult(
             new ActivityResultContracts.StartActivityForResult(),
             result -> {
                 Log.i(TAG, "cameraLauncher 回调: resultCode=" + result.getResultCode()
                         + " pendingCameraUri=" + pendingCameraUri);
                 if (result.getResultCode() == RESULT_OK && pendingCameraUri != null) {
-                    startCropActivity(pendingCameraUri);
+                    startCornerAdjust(pendingCameraUri);
                 }
                 pendingCameraUri = null;
             }
         );
-        // 拍照识别：相册
+        // 拍照识别：相册 → 直接进入角点调整(原图上, 不再裁剪)
         galleryLauncher = registerForActivityResult(
             new ActivityResultContracts.StartActivityForResult(),
             result -> {
@@ -293,20 +293,29 @@ import java.util.Locale;
                             getContentResolver().takePersistableUriPermission(uri,
                                     Intent.FLAG_GRANT_READ_URI_PERMISSION);
                         } catch (SecurityException ignored) {}
-                        startCropActivity(uri);
+                        startCornerAdjust(uri);
                     }
                 }
             }
         );
-        // 裁剪完成后识别
-        cropLauncher = registerForActivityResult(
+        // 角点调整完成后识别(用调整后的四角, 后续识别流程不变)
+        cornerAdjustLauncher = registerForActivityResult(
             new ActivityResultContracts.StartActivityForResult(),
             result -> {
-                Log.i(TAG, "cropLauncher 回调: resultCode=" + result.getResultCode());
+                Log.i(TAG, "cornerAdjustLauncher 回调: resultCode=" + result.getResultCode());
                 if (result.getResultCode() == RESULT_OK && result.getData() != null) {
-                    String path = result.getData().getStringExtra(CropActivity.EXTRA_OUTPUT_PATH);
-                    if (path != null) {
-                        runRecognition(android.net.Uri.fromFile(new java.io.File(path)));
+                    android.content.Intent data = result.getData();
+                    String path = data.getStringExtra(CornerAdjustActivity.EXTRA_IMAGE_PATH);
+                    float[] xs = data.getFloatArrayExtra(CornerAdjustActivity.EXTRA_CORNER_XS);
+                    float[] ys = data.getFloatArrayExtra(CornerAdjustActivity.EXTRA_CORNER_YS);
+                    if (path != null && xs != null && ys != null
+                            && xs.length == 4 && ys.length == 4) {
+                        float[][] corners = new float[4][2];
+                        for (int i = 0; i < 4; i++) {
+                            corners[i][0] = xs[i];
+                            corners[i][1] = ys[i];
+                        }
+                        runRecognitionWithCorners(android.net.Uri.fromFile(new java.io.File(path)), corners);
                     }
                 }
             }
@@ -1139,16 +1148,16 @@ import java.util.Locale;
             .show();
     }
 
-    /** 启动裁剪 Activity, 用户手动框选棋盘区域后再识别 */
-    private void startCropActivity(android.net.Uri uri) {
-        Intent intent = new Intent(this, CropActivity.class);
-        intent.putExtra(CropActivity.EXTRA_INPUT_URI, uri);
-        cropLauncher.launch(intent);
+    /** 启动角点调整 Activity(前置流程): 原图上自动检测角点 → 标注 → 手动调整 → 识别 */
+    private void startCornerAdjust(android.net.Uri uri) {
+        Intent intent = new Intent(this, CornerAdjustActivity.class);
+        intent.putExtra(CornerAdjustActivity.EXTRA_INPUT_URI, uri);
+        cornerAdjustLauncher.launch(intent);
     }
 
-    /** 选图/拍照后走 ONNX 模型识别流程 (与 kaya MokuDetector.detect 一致)。 */
-    private void runRecognition(android.net.Uri uri) {
-        Log.i(TAG, "runRecognition: uri=" + uri);
+    /** 用调整后的四角识别(后续识别流程不变, 走 recognizeWithCorners) */
+    private void runRecognitionWithCorners(android.net.Uri uri, float[][] corners) {
+        Log.i(TAG, "runRecognitionWithCorners: uri=" + uri);
         mokuProgressDialog = new AlertDialog.Builder(this)
                 .setTitle(R.string.scan_board)
                 .setMessage(R.string.scan_recognizing)
@@ -1162,18 +1171,18 @@ import java.util.Locale;
                 Log.i(TAG, "loadBitmapFromUri → " + (bmp == null ? "null" :
                         (bmp.getWidth() + "x" + bmp.getHeight())));
                 if (bmp == null) throw new java.io.IOException("无法读取图片");
-                // 确保 ONNX 模型已加载 (与 kaya MokuDetector.init + detect 一致)
                 if (mokuRecognizer == null || !mokuRecognizer.isReady()) {
                     ensureMokuLoaded();
                 }
                 if (mokuRecognizer == null || !mokuRecognizer.isReady()) {
                     throw new IllegalStateException("模型加载失败");
                 }
-                result = mokuRecognizer.recognize(bmp,
-                        com.gosgf.app.util.RecognitionSettings.load(this));
+                com.gosgf.app.util.RecognitionSettings rs =
+                        com.gosgf.app.util.RecognitionSettings.load(this);
+                result = mokuRecognizer.recognizeWithCorners(bmp, rs.threshold, corners, rs);
             } catch (Exception e) {
                 err = e;
-                Log.e(TAG, "识别异常: " + e.getClass().getSimpleName()
+                Log.e(TAG, "识别异常(四角): " + e.getClass().getSimpleName()
                         + ": " + e.getMessage(), e);
             }
             final com.gosgf.app.util.MokuRecognizer.RecognitionResult r = result;

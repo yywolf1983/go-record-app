@@ -27,6 +27,8 @@
             android:exported="false" />
         <activity android:name=".CropActivity"
             android:exported="false" />
+        <activity android:name=".CornerAdjustActivity"
+            android:exported="false" />
 
         <!-- 拍照识别：相机拍照输出到 cacheDir/capture_images/ 时的 FileProvider -->
         <provider

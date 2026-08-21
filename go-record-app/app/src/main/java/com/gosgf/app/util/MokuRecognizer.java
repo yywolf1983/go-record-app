@@ -264,6 +264,17 @@ public class MokuRecognizer {
     }
 
     /**
+     * 仅检测棋盘四角(前置流程用): 自动推理并返回检测到的四角(原图像素坐标, TL→TR→BR→BL)。
+     * 内部走与 {@link #recognize(Bitmap, RecognitionSettings)} 完全一致的推理路径,
+     * 保证前置检测到的角点与识别时自动检测的角点逻辑相同。
+     * 角点不足时返回图像内缩兜底角点(与 Kaya 一致), 由用户手动调整。
+     */
+    public float[][] detectCorners(Bitmap bitmap, RecognitionSettings rs) throws Exception {
+        RecognitionResult r = recognize(bitmap, rs);
+        return r.corners;
+    }
+
+    /**
      * 手动注入角点吸附:在每个角点附近 ±SEARCH_R 像素窗口内,
      * 用"棋盘角点"特征(两条暗线交叉)评分找最优位置,弥补手指拖拽的定位误差。
      * 评分 = Harris 角点响应 × 中心暗度权重(棋盘线是暗的,棋子边缘中心亮会被削弱)。
