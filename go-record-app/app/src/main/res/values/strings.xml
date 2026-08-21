@@ -47,7 +47,7 @@
     <string name="crop_cancel">取消</string>
     <string name="crop_rotate">旋转</string>
     <string name="crop_confirm">确认裁剪</string>
-    <string name="corner_adjust_hint">拖拽四角对齐棋盘 → 确认后识别</string>
+    <string name="corner_adjust_hint">拖拽四角对齐棋盘四角的交叉点(角上有棋子则对准棋子中心) → 确认后识别</string>
     <string name="corner_detecting">正在检测角点…</string>
     <string name="corner_cancel">取消</string>
     <string name="corner_confirm">确认识别</string>

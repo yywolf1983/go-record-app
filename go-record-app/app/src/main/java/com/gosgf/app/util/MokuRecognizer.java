@@ -1002,10 +1002,10 @@ public class MokuRecognizer {
         float[][] corners;
         if (externalCorners != null) {
             // 手动注入四角(用户拖动校正): 用户拖的角即权威, 直接用于 H 计算。
-            // 仅做 Harris 图像特征局部精修(±24px 窗口内找棋盘角特征, 无显著特征则保持原位)。
-            boolean[] snapped = new boolean[4];
-            corners = refineCornersToGrid(srcBmp, externalCorners, snapped);
-            Log.i(TAG, "手动注入 4 角(Harris 精修后): "
+            // 不再做 Harris 吸附 —— 角上有棋子时, 棋子中心(=正确交叉点)是均匀色块,
+            // Harris 响应弱, 反而会把角点吸到棋子边缘或邻近线交叉, 导致整盘向内偏移一格。
+            corners = externalCorners;
+            Log.i(TAG, "手动注入 4 角(直接使用, 不吸附): "
                     + String.format("TL(%.0f,%.0f) TR(%.0f,%.0f) BR(%.0f,%.0f) BL(%.0f,%.0f)",
                         corners[0][0], corners[0][1], corners[1][0], corners[1][1],
                         corners[2][0], corners[2][1], corners[3][0], corners[3][1]));
