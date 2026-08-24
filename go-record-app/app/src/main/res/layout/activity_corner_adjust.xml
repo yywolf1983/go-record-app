@@ -9,13 +9,6 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
-    <ProgressBar
-        android:id="@+id/progressBar"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="center"
-        android:visibility="gone" />
-
     <TextView
         android:id="@+id/tvHint"
         android:layout_width="wrap_content"
@@ -26,8 +19,7 @@
         android:padding="8dp"
         android:text="@string/corner_adjust_hint"
         android:textColor="#FFFFFF"
-        android:textSize="14sp"
-        android:visibility="gone" />
+        android:textSize="14sp" />
 
     <LinearLayout
         android:layout_width="match_parent"

@@ -152,15 +152,18 @@ public class CornerAdjustView extends View {
         displayMatrix.invert(invertMatrix);
     }
 
-    /** 默认四角: 图片显示区域四角(内缩 5%) */
+    /** 默认四角: 直接放在手机屏幕(视图)正中间, 按视图较短边比例确定窗口大小 */
     private void initDefaultCorners() {
         if (bitmap == null || viewW <= 0 || viewH <= 0) return;
-        float[] c = {0, 0, bitmap.getWidth(), bitmap.getHeight()};
-        displayMatrix.mapPoints(c);
-        float left = c[0], top = c[1], right = c[2], bottom = c[3];
-        float insetX = (right - left) * 0.05f;
-        float insetY = (bottom - top) * 0.05f;
-        left += insetX; top += insetY; right -= insetX; bottom -= insetY;
+        // 以整个视图中心为基准, 不依赖图片显示区域(可能带黑边), 保证窗口始终在屏幕正中。
+        float cx = viewW / 2f;
+        float cy = viewH / 2f;
+        // 窗口边长取较短边的 90%, 让矩形居中且四周留边, 方便用户直接拖到棋盘角。
+        float half = Math.min(viewW, viewH) * 0.45f;
+        float left = cx - half;
+        float top = cy - half;
+        float right = cx + half;
+        float bottom = cy + half;
         handles[0].set(left, top);
         handles[1].set(right, top);
         handles[2].set(right, bottom);
