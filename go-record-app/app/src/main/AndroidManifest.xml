@@ -32,9 +32,11 @@
         <activity android:name=".CornerAdjustActivity"
             android:exported="false" />
 
-        <!-- 拍照识别：相机拍照输出到 cacheDir/capture_images/ 时的 FileProvider -->
+        <!-- 拍照识别：相机拍照输出到 cacheDir/capture_images/ 时的 FileProvider
+             使用自定义子类 AppFileProvider, 使其 android:name 与 registration-lib.aar
+             中的 androidx.core.content.FileProvider 不同, 两者作为独立 provider 并存。 -->
         <provider
-            android:name="androidx.core.content.FileProvider"
+            android:name=".AppFileProvider"
             android:authorities="${applicationId}.fileprovider"
             android:exported="false"
             android:grantUriPermissions="true">

@@ -795,7 +795,9 @@ public class GoBoard {
     // 势力范围（近距离检测，距离 ≤ 3）
     public float getBlackInfluenceValue() { ensureScoreEstimator(); return scoreEstimator.getBlackInfluenceValue(); }
     public float getWhiteInfluenceValue() { ensureScoreEstimator(); return scoreEstimator.getWhiteInfluenceValue(); }
+    @Deprecated
     public List<Position> getBlackInfluencePositions() { ensureScoreEstimator(); return scoreEstimator.getBlackInfluencePositions(); }
+    @Deprecated
     public List<Position> getWhiteInfluencePositions() { ensureScoreEstimator(); return scoreEstimator.getWhiteInfluencePositions(); }
     public float getInfluenceAt(int x, int y) { ensureScoreEstimator(); return scoreEstimator.getInfluenceAt(x, y); }
     /** 空点势力强度（0~1），供棋盘按强弱渲染势力范围 */

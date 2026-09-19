@@ -383,11 +383,13 @@ public class ScoreEstimator {
     // ==================== 旧影响力 API 保持兼容 ====================
 
     /** @deprecated 使用 getBlackPotentialPositions() / getWhitePotentialPositions() */
+    @Deprecated
     public List<GoBoard.Position> getBlackInfluencePositions() {
         return getBlackPotentialPositions();
     }
 
     /** @deprecated 使用 getBlackPotentialPositions() / getWhitePotentialPositions() */
+    @Deprecated
     public List<GoBoard.Position> getWhiteInfluencePositions() {
         return getWhitePotentialPositions();
     }
