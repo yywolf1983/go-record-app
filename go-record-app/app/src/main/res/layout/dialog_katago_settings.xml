@@ -81,6 +81,48 @@
             android:textStyle="bold" />
     </LinearLayout>
 
+    <!-- 分析时间尺度（秒）：1-30，实时分析与人机对战共用 -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/katago_time_scale"
+        android:textSize="13sp"
+        android:textColor="@color/text_secondary"
+        android:layout_marginTop="14dp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginTop="2dp">
+
+        <SeekBar
+            android:id="@+id/seek_time_scale"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:min="1"
+            android:max="30" />
+
+        <TextView
+            android:id="@+id/tv_time_scale"
+            android:layout_width="64dp"
+            android:layout_height="wrap_content"
+            android:textAlignment="textEnd"
+            android:textSize="13sp"
+            android:textColor="@color/text_primary"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/katago_time_scale_hint"
+        android:textSize="11sp"
+        android:textColor="@color/text_secondary"
+        android:layout_marginTop="2dp" />
+
     <!-- 显示步数 -->
     <TextView
         android:layout_width="match_parent"
@@ -166,6 +208,81 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content" />
     </LinearLayout>
+
+    <!-- 人机对战：随时开启 / 随时任选一方（对战期间实时分析照常工作） -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/vs_settings_title"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:textColor="@color/text_primary"
+        android:layout_marginTop="18dp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginTop="8dp">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/vs_settings_enable"
+            android:textSize="13sp"
+            android:textColor="@color/text_secondary" />
+
+        <Switch
+            android:id="@+id/switch_vs_play"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content" />
+    </LinearLayout>
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/vs_settings_color"
+        android:textSize="13sp"
+        android:textColor="@color/text_secondary"
+        android:layout_marginTop="10dp" />
+
+    <RadioGroup
+        android:id="@+id/rg_vs_color"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="2dp">
+
+        <RadioButton
+            android:id="@+id/rb_vs_black"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/vs_human_black"
+            android:textSize="12sp"
+            android:textColor="@color/text_primary"
+            android:buttonTint="@color/colorPrimary" />
+
+        <RadioButton
+            android:id="@+id/rb_vs_white"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/vs_human_white"
+            android:textSize="12sp"
+            android:textColor="@color/text_primary"
+            android:buttonTint="@color/colorPrimary" />
+    </RadioGroup>
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/vs_settings_hint"
+        android:textSize="11sp"
+        android:textColor="@color/text_secondary"
+        android:layout_marginTop="2dp" />
 
     <!-- 死活模式(dynamicPlayoutDoublingAdvantageCapPerOppLead = 0.0) -->
     <LinearLayout

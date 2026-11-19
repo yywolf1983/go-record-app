@@ -22,6 +22,7 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.Switch;
+import android.widget.RadioGroup;
 import android.content.SharedPreferences;
 import android.widget.Spinner;
 import android.widget.TextView;
@@ -115,7 +116,7 @@ import java.util.Locale;
     private boolean liveAnalysis = false;
     // 全自动分析：每步落子/导航后立即自动分析（无需点击分析按钮）
     private boolean autoAnalyze = false;
-    private boolean engineBusy = false;
+    private volatile boolean engineBusy = false; // 主线程/分析线程/AI线程共享，volatile 保证可见性
     private int analysisToken = 0; // 每次分析+1，棋盘变化时取消旧分析使其结果作废
     private ValueAnimator liveBtnAnim;
     private Runnable liveTextRunnable;
@@ -132,10 +133,22 @@ import java.util.Locale;
     private static final String PREF_AUTO_ANALYZE = "katago_auto_analyze"; // 全自动分析开关
     /** 死活模式:dynamicPlayoutDoublingAdvantageCapPerOppLead=0.0, 不随优势降搜索量 */
     private static final String PREF_TSUME_MODE = "katago_tsume_mode";
+    /** 实时分析 / 人机对战共用的时间尺度（秒），范围 1-30，默认 5 */
+    private static final String PREF_MAX_TIME = "katago_max_time";
+    private static final int DEFAULT_MAX_TIME = 5;
     // 分析强度档位 → 实际 maxVisits（EIGEN 纯 CPU 下档位越低越快；AGM H6 等低端机用低档）
     private static final int[] STRENGTH_VISITS = {50, 100, 200, 400, 800};
     private static final String[] KOMI_VALUES = {"7.5", "6.5", "0.5", "5.5", "0.0"};
     private static final Integer[] THREAD_VALUES = {1, 2, 4, 6, 8};
+
+    // ==================== 人机对战 ====================
+    private TextView tvVsStatus; // 状态行；点击可打开「实时分析」设置页随时开启/调整对战
+    private boolean vsMode = false;          // 是否处于人机对战
+    private int humanColor = GoBoard.BLACK;  // 用户执子
+    private int aiColor = GoBoard.WHITE;    // AI 执子
+    private boolean aiThinking = false;     // AI 正在思考（禁止用户落子）
+    private int vsToken = 0;                // 令牌：使过期的 AI 任务结果作废
+    private Thread aiMoveThread = null;     // 当前 AI 落子后台线程
     
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -422,6 +435,10 @@ import java.util.Locale;
         btnScore = findViewById(R.id.btn_score);
         btnShowNumbers = findViewById(R.id.btn_show_numbers);
 
+        // 人机对战状态行（入口已移入「实时分析」设置页，点击此处可随时打开设置）
+        tvVsStatus = findViewById(R.id.tv_vs_status);
+        tvVsStatus.setOnClickListener(v -> showKataGoSettings());
+
         // 摆子模式标签
         btnPlaceLabel = findViewById(R.id.btn_place_label);
 
@@ -475,6 +492,11 @@ import java.util.Locale;
      * 这样分析结束后用户未落子时，点一次即可重新分析，无需两次点击。
      */
     private void onAnalyzeButtonClick() {
+        if (vsMode && aiThinking) {
+            // AI 正在独占引擎，无法分析：只提示稍候，不排队，避免产生非预期的自动分析
+            Toast.makeText(this, R.string.vs_wait_thinking, Toast.LENGTH_SHORT).show();
+            return;
+        }
         liveAnalysis = true;
         Toast.makeText(this, R.string.engine_analyzing, Toast.LENGTH_SHORT).show();
         runAnalysis();
@@ -508,6 +530,8 @@ import java.util.Locale;
         TextView tvStrength = view.findViewById(R.id.tv_strength);
         SeekBar seekTopN = view.findViewById(R.id.seek_topn);
         TextView tvTopN = view.findViewById(R.id.tv_topn);
+        SeekBar seekTimeScale = view.findViewById(R.id.seek_time_scale);
+        TextView tvTimeScale = view.findViewById(R.id.tv_time_scale);
         Spinner spinnerKomi = view.findViewById(R.id.spinner_komi);
         Spinner spinnerThreads = view.findViewById(R.id.spinner_threads);
 
@@ -536,6 +560,18 @@ import java.util.Locale;
         seekStrength.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar s, int p, boolean fromUser) {
                 tvStrength.setText(String.valueOf(STRENGTH_VISITS[p]));
+            }
+            @Override public void onStartTrackingTouch(SeekBar s) {}
+            @Override public void onStopTrackingTouch(SeekBar s) {}
+        });
+
+        // 分析时间尺度（秒）：1-30，实时分析与人机对战共用
+        int timeScale = readMaxTimeSeconds();
+        seekTimeScale.setProgress(timeScale);
+        tvTimeScale.setText(timeScale + "s");
+        seekTimeScale.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar s, int p, boolean fromUser) {
+                tvTimeScale.setText(clampTimeScale(p) + "s");
             }
             @Override public void onStartTrackingTouch(SeekBar s) {}
             @Override public void onStopTrackingTouch(SeekBar s) {}
@@ -577,6 +613,12 @@ import java.util.Locale;
         Switch switchAutoAnalyze = view.findViewById(R.id.switch_auto_analyze);
         switchAutoAnalyze.setChecked(katagoPrefs.getBoolean(PREF_AUTO_ANALYZE, false));
 
+        // 人机对战：随时开关 + 随时任选一方（配置在此设置页，对战中可随时改选）
+        Switch switchVsPlay = view.findViewById(R.id.switch_vs_play);
+        RadioGroup rgVsColor = view.findViewById(R.id.rg_vs_color);
+        switchVsPlay.setChecked(vsMode);
+        rgVsColor.check(humanColor == GoBoard.BLACK ? R.id.rb_vs_black : R.id.rb_vs_white);
+
         // 死活模式开关
         Switch switchTsume = view.findViewById(R.id.switch_tsume_mode);
         switchTsume.setChecked(katagoPrefs.getBoolean(PREF_TSUME_MODE, false));
@@ -586,8 +628,12 @@ import java.util.Locale;
                 .setPositiveButton(android.R.string.ok, (d, w) -> {
                     boolean auto = switchAutoAnalyze.isChecked();
                     boolean tsume = switchTsume.isChecked();
+                    boolean vsOn = switchVsPlay.isChecked();
+                    int vsHuman = rgVsColor.getCheckedRadioButtonId() == R.id.rb_vs_white
+                            ? GoBoard.WHITE : GoBoard.BLACK;
                     katagoPrefs.edit()
                             .putInt(PREF_MAX_VISITS, seekStrength.getProgress())
+                            .putInt(PREF_MAX_TIME, clampTimeScale(seekTimeScale.getProgress()))
                             .putInt(PREF_TOP_N, seekTopN.getProgress())
                             .putString(PREF_KOMI, KOMI_VALUES[spinnerKomi.getSelectedItemPosition()])
                             .putInt(PREF_THREADS, THREAD_VALUES[spinnerThreads.getSelectedItemPosition()])
@@ -597,8 +643,17 @@ import java.util.Locale;
                     autoAnalyze = auto;
                     // 立即把设置中的贴目同步到棋盘，使估算口径随之更新
                     board.setKomi((float) Double.parseDouble(katagoPrefs.getString(PREF_KOMI, "7.5")));
-                    // 开启全自动分析后立即分析当前局面；关闭则按既有逻辑（若手动分析开启则重分析）
-                    if (autoAnalyze) {
+                    // 人机对战设置即时生效：随时开/关、随时改选执子（默认不重置当前棋局）
+                    applyVsSettings(vsOn, vsHuman);
+                    if (vsMode) {
+                        // 对战期间：分析严格跟随「自动分析」开关，未开启则不自动分析
+                        if (autoAnalyze) {
+                            liveAnalysis = true;
+                            if (!aiThinking && !engineBusy) runAnalysis();
+                        } else {
+                            cancelLiveAnalysis();
+                        }
+                    } else if (autoAnalyze) {
                         liveAnalysis = true;
                         runAnalysis();
                     } else if (liveAnalysis) {
@@ -607,6 +662,17 @@ import java.util.Locale;
                 })
                 .setNegativeButton(android.R.string.cancel, null)
                 .show();
+    }
+
+    /** 读取时间尺度设置（秒），钳制到 1-30 */
+    private int readMaxTimeSeconds() {
+        if (katagoPrefs == null) return DEFAULT_MAX_TIME;
+        return clampTimeScale(katagoPrefs.getInt(PREF_MAX_TIME, DEFAULT_MAX_TIME));
+    }
+
+    /** 把 SeekBar / 设置值钳制到 1-30 秒 */
+    private int clampTimeScale(int v) {
+        return Math.max(1, Math.min(30, v));
     }
 
     /** 分析进行时按钮变色 + "分析中..." 文字动画 */
@@ -711,11 +777,14 @@ import java.util.Locale;
                 boolean includePolicy = true;
                 double komi = Double.parseDouble(katagoPrefs.getString(PREF_KOMI, "7.5"));
                 boolean tsumeMode = katagoPrefs.getBoolean(PREF_TSUME_MODE, false);
+                // 时间尺度：实时分析每次思考的最长秒数（1-30s），与 maxVisits 任一先到即停
+                double maxTimeSeconds = readMaxTimeSeconds();
                 // 同步设置中的贴目到棋盘（ScoreEstimator），使落子瞬间的启发式兜底
                 // 与 KataGo 引擎使用同一贴目，避免覆盖时因贴目不一致而跳变。
                 board.setKomi((float) komi);
 
-                AnalysisResult result = katagoEngine.analyze(boardState, boardSize, maxVisits, who, komi, threads, includePolicy, tsumeMode);
+                AnalysisResult result = katagoEngine.analyze(boardState, boardSize, maxVisits, who,
+                        komi, threads, includePolicy, tsumeMode, maxTimeSeconds);
 
                 // 保存引擎计算结果（以引擎为准，相对当前行棋方），用于步数行末显示
                 lastWinrate = result.rootWinrate;
@@ -779,11 +848,26 @@ import java.util.Locale;
     }
 
     private void onBoardTouch(int x, int y) {
+        // 人机对战：AI 回合 / AI 思考期间禁止用户落子
+        if (vsMode) {
+            if (aiThinking) {
+                Toast.makeText(this, R.string.vs_wait_thinking, Toast.LENGTH_SHORT).show();
+                return;
+            }
+            if (board.getCurrentPlayer() != humanColor) {
+                Toast.makeText(this, R.string.vs_not_your_turn, Toast.LENGTH_SHORT).show();
+                return;
+            }
+        }
         boardView.setTerritoryMode(false);
         boolean success = board.placeStone(x, y);
         if (success) {
             boardView.refresh();
             updateCommentDisplay();
+            // 用户落子后轮到 AI，自动触发应手
+            if (vsMode && board.getCurrentPlayer() == aiColor) {
+                requestAiMove();
+            }
         } else {
             String errorMessage = board.getLastErrorMessage();
             if (errorMessage != null && !errorMessage.isEmpty()) {
@@ -799,6 +883,8 @@ import java.util.Locale;
     }
 
     private void onNewGame(int size) {
+        // 改变棋局历史会破坏对战状态，自动退出人机对战
+        exitVsMode(false);
         if (size <= 0) size = GoBoard.DEFAULT_BOARD_SIZE;
         // 若尺寸变化, 需要重新构造 GoBoard 并绑定到 boardView
         if (board == null || board.getBoardSize() != size) {
@@ -909,7 +995,9 @@ import java.util.Locale;
         int currentIndex = board.getCurrentMoveIndex();
         int totalMoves = board.getMoveHistory().size();
         String player = board.getCurrentPlayer() == GoBoard.BLACK ? "黑方" : "白方";
-        moveCountText.setText("步数: " + currentIndex + " " + player + buildAnalysisSuffix());
+        // 对战时若未开启分析，步数行不挂「计算中…」；开启时与打谱一致显示胜率/目差
+        String suffix = (vsMode && !liveAnalysis) ? "" : buildAnalysisSuffix();
+        moveCountText.setText("步数: " + currentIndex + " " + player + suffix);
 
         // 更新注释显示
         String comment = board.getCurrentComment();
@@ -921,7 +1009,18 @@ import java.util.Locale;
 
         // 局面已变化：若开启全自动分析，则立即对当前局面重新分析；
         // 否则清除旧标记并复位（需用户再次点击分析按钮）
-        if (autoAnalyze && !isFinishing()) {
+        if (vsMode) {
+            // 局面已变：作废旧分析结果、清除标记。
+            // 对战期间分析严格跟随「自动分析」开关：未开启则落子后不再自动分析；
+            // 用户手动点「实时分析」只对当前局面生效一次。
+            analysisToken++;
+            stopLiveAnim();
+            lastWinrate = -1;
+            lastScoreLead = 0;
+            boardView.clearAnalysisMarks();
+            liveAnalysis = autoAnalyze;
+            updateVsStatus();
+        } else if (autoAnalyze && !isFinishing()) {
             liveAnalysis = true;
             // 局面已变，立即清除棋盘上一步的旧标记，避免残留，等新分析回来再绘制
             boardView.clearAnalysisMarks();
@@ -938,6 +1037,8 @@ import java.util.Locale;
     }
 
     private void onPlace() {
+        // 摆子会重建棋局，自动退出人机对战
+        exitVsMode(false);
         // 切换摆子模式
         isPlaceMode = !isPlaceMode;
         boardView.setPlaceMode(isPlaceMode);
@@ -1462,6 +1563,8 @@ import java.util.Locale;
 
 
     private void onLoadGame() {
+        // 加载棋谱会重建棋局，自动退出人机对战
+        exitVsMode(false);
         // 请求文件访问权限
         requestStoragePermission();
     }
@@ -1502,6 +1605,8 @@ import java.util.Locale;
     }
 
     private void onPrevious() {
+        // 回放历史会脱离对战局面，自动退出人机对战
+        exitVsMode(false);
         boardView.setTerritoryMode(false);
         boolean success = board.previousMove();
         if (success) {
@@ -1511,6 +1616,8 @@ import java.util.Locale;
     }
 
     private void onNext() {
+        // 回放历史会脱离对战局面，自动退出人机对战
+        exitVsMode(false);
         boardView.setTerritoryMode(false);
         boolean success = board.nextMove();
         if (success) {
@@ -1565,6 +1672,8 @@ import java.util.Locale;
             .setTitle("跳转到指定步数")
             .setView(layout)
             .setPositiveButton("跳转", (dialog, which) -> {
+                // 跳转历史会脱离对战局面，自动退出人机对战
+                exitVsMode(false);
                 String text = input.getText().toString().trim();
                 if (text.isEmpty()) {
                     Toast.makeText(MainActivity.this, "请输入步数", Toast.LENGTH_SHORT).show();
@@ -1602,10 +1711,253 @@ import java.util.Locale;
     }
 
     private void onPass() {
+        // 人机对战：AI 回合 / AI 思考期间禁止用户虚手
+        if (vsMode) {
+            if (aiThinking) {
+                Toast.makeText(this, R.string.vs_wait_thinking, Toast.LENGTH_SHORT).show();
+                return;
+            }
+            if (board.getCurrentPlayer() != humanColor) {
+                Toast.makeText(this, R.string.vs_not_your_turn, Toast.LENGTH_SHORT).show();
+                return;
+            }
+        }
         boardView.setTerritoryMode(false);
         board.placeStone(-1, -1);
         boardView.refresh();
         updateCommentDisplay();
+        if (vsMode) {
+            // 用户虚手 + 上一手 AI 虚手 → 对局结束
+            checkGameOver();
+            if (vsMode && board.getCurrentPlayer() == aiColor) {
+                requestAiMove();
+            }
+        }
+    }
+
+    // ==================== 人机对战 ====================
+
+    /** 由「实时分析」设置页应用人机对战配置：随时开/关、随时任选一方。 */
+    private void applyVsSettings(boolean enabled, int human) {
+        if (!enabled) {
+            if (vsMode) exitVsMode(true);
+            return;
+        }
+        if (!vsMode) {
+            startVsMode(human);
+        } else {
+            switchVsColor(human);
+        }
+    }
+
+    /** 对战进行中随时切换执子方：不重置棋局，作废旧 AI 任务后按新身份继续。 */
+    private void switchVsColor(int human) {
+        if (!vsMode || human == humanColor) return;
+        vsToken++;              // 作废进行中的 AI 任务，避免其按旧身份落子
+        aiThinking = false;
+        humanColor = human;
+        aiColor = (human == GoBoard.BLACK) ? GoBoard.WHITE : GoBoard.BLACK;
+        updateCommentDisplay();
+        updateVsStatus();
+        if (board.getCurrentPlayer() == aiColor) {
+            requestAiMove();
+        } else if (liveAnalysis && !isFinishing() && !engineBusy) {
+            runAnalysis();
+        }
+    }
+
+    /** 开启人机对战：固定接续当前局面（随时可开），不重置棋谱。 */
+    private void startVsMode(int human) {
+        // 先清除上一局的旧标记与过期结果
+        cancelLiveAnalysis();
+        vsToken++;              // 使任何旧 AI 任务结果作废
+        aiThinking = false;
+        vsMode = true;
+        liveAnalysis = autoAnalyze; // 仅当开启「自动分析」，对战每回合才自动分析
+        humanColor = human;
+        aiColor = (human == GoBoard.BLACK) ? GoBoard.WHITE : GoBoard.BLACK;
+
+        // 固定接续当前局面，实现「随时开启」；如需空盘请先点「新局」再开启对战。
+        // 不走 onNewGame：该方法会退出对战模式。
+        board.setKomi((float) Double.parseDouble(katagoPrefs.getString(PREF_KOMI, "7.5")));
+        boardView.setTerritoryMode(false);
+        boardView.refresh();
+
+        String me = humanColor == GoBoard.BLACK ? "黑" : "白";
+        String ai = aiColor == GoBoard.BLACK ? "黑" : "白";
+        updateCommentDisplay();
+        Toast.makeText(this, getString(R.string.vs_started, me, ai), Toast.LENGTH_SHORT).show();
+        updateVsStatus();
+
+        // 当前轮到 AI 则立即应手（落子后自动分析）；否则立即分析当前局面
+        if (board.getCurrentPlayer() == aiColor) {
+            requestAiMove();
+        } else if (liveAnalysis && !isFinishing()) {
+            runAnalysis();
+        }
+    }
+
+    /** 结束对战；保留当前棋谱供复盘。showToast=false 用于棋局被其他操作重建时静默退出。 */
+    private void exitVsMode(boolean showToast) {
+        if (!vsMode) return;
+        vsMode = false;
+        aiThinking = false;
+        vsToken++;          // 作废进行中的 AI 任务
+        // 回到普通打谱模式：分析状态回归「自动分析」开关，避免残留对战期的分析标记
+        liveAnalysis = autoAnalyze;
+        updateVsStatus();
+        if (showToast) {
+            Toast.makeText(this, R.string.vs_stopped, Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    /** 刷新人机对战状态行（入口在「实时分析」设置页） */
+    private void updateVsStatus() {
+        if (tvVsStatus == null) return;
+        if (!vsMode) {
+            tvVsStatus.setText(R.string.vs_status_off);
+            return;
+        }
+        if (aiThinking) {
+            tvVsStatus.setText(R.string.vs_thinking);
+        } else {
+            String me = humanColor == GoBoard.BLACK ? "黑" : "白";
+            String ai = aiColor == GoBoard.BLACK ? "黑" : "白";
+            tvVsStatus.setText("你执" + me + " · AI执" + ai + " · " + getString(R.string.vs_your_turn));
+        }
+    }
+
+    /** 请求 AI 应手：后台用 KataGo 选最佳着法并落子。 */
+    private void requestAiMove() {
+        if (!vsMode || aiThinking || isFinishing()) return;
+        if (board.getCurrentPlayer() != aiColor) return;
+
+        final int myToken = ++vsToken;
+        aiThinking = true;
+        engineBusy = true;   // 与实时分析共用「引擎忙」标志，避免并发
+        updateVsStatus();
+
+        aiMoveThread = new Thread(() -> {
+            try {
+                // 等待可能仍在运行的实时分析线程，避免并发 prepare / close native 引擎
+                Thread t = analysisThread;
+                if (t != null && t.isAlive() && t != Thread.currentThread()) {
+                    try { t.join(3000); } catch (InterruptedException ignored) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+                if (myToken != vsToken || !vsMode) return;
+
+                if (katagoEngine == null) katagoEngine = new KataGoEngine();
+                if (!enginePrepared) {
+                    String modelPath = katagoPrefs.getString(PREF_MODEL_PATH, "");
+                    String err = katagoEngine.prepare(MainActivity.this, modelPath);
+                    if (err != null) {
+                        final String finalErr = err;
+                        runOnUiThread(() -> {
+                            Toast.makeText(MainActivity.this,
+                                    getString(R.string.vs_engine_unavailable) + "\n" + finalErr,
+                                    Toast.LENGTH_LONG).show();
+                            exitVsMode(false);
+                        });
+                        return;
+                    }
+                    enginePrepared = true;
+                }
+
+                int[][] boardState = board.getBoard();
+                int boardSize = boardState.length;
+                int who = board.getCurrentPlayer();
+                int strengthIdx = katagoPrefs.getInt(PREF_MAX_VISITS, 1);
+                int idx = Math.max(0, Math.min(strengthIdx, STRENGTH_VISITS.length - 1));
+                int maxVisits = STRENGTH_VISITS[idx]; // 对战不降档，棋力由设置决定
+                int threads = katagoPrefs.getInt(PREF_THREADS, 4);
+                double komi = Double.parseDouble(katagoPrefs.getString(PREF_KOMI, "7.5"));
+                boolean tsumeMode = katagoPrefs.getBoolean(PREF_TSUME_MODE, false);
+                double maxTimeSeconds = readMaxTimeSeconds();
+                board.setKomi((float) komi);
+
+                AnalysisResult result = katagoEngine.analyze(boardState, boardSize, maxVisits, who,
+                        komi, threads, false, tsumeMode, maxTimeSeconds);
+                if (myToken != vsToken || !vsMode || result == null) return;
+
+                // 取最佳着法：优先 order==0，其次第一条候选；无候选或坐标非法则虚手
+                KataGoEngine.AnalysisMove best = null;
+                for (KataGoEngine.AnalysisMove m : result.moves) {
+                    if (m.order == 0) { best = m; break; }
+                }
+                if (best == null && !result.moves.isEmpty()) best = result.moves.get(0);
+
+                final int[] xy = {-1, -1}; // (-1,-1) 表示虚手
+                if (best != null && best.x >= 0 && best.y >= 0
+                        && best.x < boardSize && best.y < boardSize
+                        && board.getBoard()[best.y][best.x] == GoBoard.EMPTY) {
+                    xy[0] = best.x;
+                    xy[1] = best.y;
+                }
+
+                runOnUiThread(() -> {
+                    if (myToken != vsToken || !vsMode) return;
+                    if (board.getCurrentPlayer() != aiColor) return;
+                    boolean ok;
+                    if (xy[0] < 0) {
+                        ok = board.placeStone(-1, -1);
+                        Toast.makeText(MainActivity.this, R.string.vs_ai_pass, Toast.LENGTH_SHORT).show();
+                    } else {
+                        ok = board.placeStone(xy[0], xy[1]);
+                        if (!ok) ok = board.placeStone(-1, -1); // 兜底：非法点改虚手，避免对战卡死
+                    }
+                    boardView.setTerritoryMode(false);
+                    boardView.refresh();
+                    updateCommentDisplay();
+                    if (!ok) {
+                        Toast.makeText(MainActivity.this,
+                                getString(R.string.vs_ai_failed, String.valueOf(board.getLastErrorMessage())),
+                                Toast.LENGTH_SHORT).show();
+                        exitVsMode(false);
+                        return;
+                    }
+                    updateVsStatus();
+                    checkGameOver();
+                });
+            } catch (Exception e) {
+                Log_e("人机对战 AI 落子异常", e);
+                runOnUiThread(() -> {
+                    if (myToken == vsToken && vsMode) {
+                        Toast.makeText(MainActivity.this,
+                                getString(R.string.vs_ai_failed, String.valueOf(e.getMessage())),
+                                Toast.LENGTH_SHORT).show();
+                    }
+                });
+            } finally {
+                aiThinking = false;
+                engineBusy = false;
+                if (Thread.currentThread() == aiMoveThread) aiMoveThread = null;
+                // 后台线程先释放引擎占用（volatile 写），再 post 到主线程触发分析，
+                // 保证 runAnalysis 读到的 engineBusy 已是 false，不会被误丢弃。
+                runOnUiThread(() -> {
+                    updateVsStatus();
+                    if (vsMode && !isFinishing() && liveAnalysis) {
+                        // AI 已应手，当前轮到用户：此时引擎空闲，分析新局面并绘制候选点/胜率
+                        runAnalysis();
+                    }
+                });
+            }
+        }, "VsAiMove");
+        aiMoveThread.start();
+    }
+
+    /** 连续两手虚手 → 对局结束，退出对战模式并保留棋谱 */
+    private void checkGameOver() {
+        if (!vsMode) return;
+        List<GoBoard.Move> h = board.getMoveHistory();
+        if (h == null || h.size() < 2) return;
+        GoBoard.Move last = h.get(h.size() - 1);
+        GoBoard.Move prev = h.get(h.size() - 2);
+        if (last.x == -1 && prev.x == -1) {
+            Toast.makeText(this, R.string.vs_game_over, Toast.LENGTH_LONG).show();
+            exitVsMode(false);
+        }
     }
 
     /**
@@ -1863,8 +2215,9 @@ import java.util.Locale;
             final double[] correction = {-1}; // -1 表示不可用
             try {
                 if (engineBusy) return; // 仍忙，保留启发式结果
+                // 估算校正固定 1.5s 时间预算（与注释一致），不受实时分析时间尺度影响
                 KataGoEngine.AnalysisResult r = katagoEngine.analyze(
-                        snapshot, boardSize, estVisits, nextPlayer, komi, threads, false, tsumeMode);
+                        snapshot, boardSize, estVisits, nextPlayer, komi, threads, false, tsumeMode, 1.5);
                 if (r != null) {
                     // rootScoreLead 为「当前行棋方」领先目数，折算为相对黑方
                     correction[0] = blackToMove ? r.rootScoreLead : -r.rootScoreLead;
@@ -2066,6 +2419,16 @@ import java.util.Locale;
         super.onDestroy();
         // 保存棋局状态
         saveGameStateToPreferences();
+        // 作废并等待进行中的 AI 落子任务，避免其回写已销毁的界面
+        vsToken++;
+        aiThinking = false;
+        Thread ai = aiMoveThread;
+        if (ai != null && ai.isAlive()) {
+            try { ai.join(3000); } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        aiMoveThread = null;
         // 停止分析线程并在退出前关闭 native 引擎，避免 Activity 销毁后 native 仍在跑
         // 或 close 与分析并发导致进程崩溃
         stopAnalysisAndWait();

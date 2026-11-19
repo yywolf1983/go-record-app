@@ -63,7 +63,7 @@
     <string name="katago_komi">贴目</string>
     <string name="katago_threads">分析线程数</string>
     <string name="katago_settings_hint">修改后下一次分析自动生效。</string>
-    <string name="katago_auto_analyze">自动分析（每步落子后立即分析）</string>
+    <string name="katago_auto_analyze">自动分析（每步落子后分析，含人机对战）</string>
     <string name="katago_auto_analyze_on">已开启自动分析</string>
     <string name="katago_model">模型文件</string>
     <string name="katago_model_select">选择模型…</string>
@@ -78,4 +78,31 @@
     <string name="engine_scorelead">领先目数</string>
     <string name="engine_best">最佳</string>
     <string name="engine_visit">访问</string>
+
+    <!-- 实时分析：时间尺度 1-30s -->
+    <string name="katago_time_scale">分析时间尺度（秒）</string>
+    <string name="katago_time_scale_hint">实时分析与人机对战共用：每步思考的最长秒数（1-30s），与访问次数任一先到即停。</string>
+
+    <!-- 人机对战 -->
+    <string name="vs_play">人机对战</string>
+    <string name="vs_end">结束对战</string>
+    <string name="vs_status_off">人机对战未开启 · 点击此处在设置中开启</string>
+    <string name="vs_title">人机对战</string>
+    <string name="vs_choose_color">选择你的执子</string>
+    <string name="vs_human_black">我执黑 · AI 执白</string>
+    <string name="vs_human_white">我执白 · AI 执黑</string>
+    <string name="vs_thinking">AI 思考中…</string>
+    <string name="vs_your_turn">轮到你落子</string>
+    <string name="vs_ai_pass">AI 虚手</string>
+    <string name="vs_game_over">双方连续虚手，对局结束</string>
+    <string name="vs_engine_unavailable">引擎未就绪，请先长按「实时分析」选择模型文件</string>
+    <string name="vs_not_your_turn">当前为 AI 回合，请稍候</string>
+    <string name="vs_wait_thinking">AI 正在思考，请稍候</string>
+    <string name="vs_started">对战开始：你执%1$s，AI 执%2$s</string>
+    <string name="vs_stopped">已结束对战，当前棋谱可继续打谱复盘</string>
+    <string name="vs_ai_failed">AI 落子失败：%1$s</string>
+    <string name="vs_settings_title">人机对战</string>
+    <string name="vs_settings_enable">开启人机对战（随时可开关）</string>
+    <string name="vs_settings_color">我的执子（对战中可随时改选，棋局不重置）</string>
+    <string name="vs_settings_hint">从当前局面接着与 AI 对弈，随时可在此开关或改选执子（需空盘请先点「新局」）；仅开启「自动分析」后，AI 应手才会自动分析并给出候选点与胜率。</string>
 </resources>

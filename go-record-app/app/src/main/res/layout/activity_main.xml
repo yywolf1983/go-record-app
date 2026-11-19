@@ -302,6 +302,28 @@
                     android:textColor="@color/text_secondary" />
             </LinearLayout>
         </LinearLayout>
+
+        <!-- 人机对战：入口 + 状态 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginTop="4dp"
+            android:paddingHorizontal="2dp">
+
+            <!-- 入口已移入「实时分析」设置页；点击此状态行可随时打开设置 -->
+            <TextView
+                android:id="@+id/tv_vs_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="?android:attr/selectableItemBackground"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp"
+                android:text="@string/vs_status_off"
+                android:textSize="12sp"
+                android:textColor="@color/text_secondary" />
+        </LinearLayout>
     </LinearLayout>
 
     <!-- 中部：棋盘 + 注释（注释框占满剩余空间） -->

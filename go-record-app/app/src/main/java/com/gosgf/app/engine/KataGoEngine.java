@@ -103,7 +103,7 @@ public class KataGoEngine {
      * @param modelPath 用户选定的模型文件绝对路径
      * @return 错误信息；null 表示准备就绪。
      */
-    public String prepare(Context context, String modelPath) {
+    public synchronized String prepare(Context context, String modelPath) {
         String loadErr = ensureLibLoaded();
         if (loadErr != null) return loadErr;
         if (modelPath == null || modelPath.isEmpty()) {
@@ -175,6 +175,24 @@ public class KataGoEngine {
                                                  int nextPlayer, double komi, int numThreads,
                                                  boolean includePolicy, boolean tsumeMode)
             throws IOException, JSONException {
+        // 旧调用链：不限制时间，仅由 maxVisits 约束
+        return analyze(boardState, boardSize, maxVisits, nextPlayer, komi, numThreads,
+                includePolicy, tsumeMode, 0.0);
+    }
+
+    /**
+     * 分析当前局面（带时间尺度）。
+     *
+     * @param maxTimeSeconds 单次搜索时间上限（秒），对应 KataGo analysis 协议的 maxTime。
+     *                        <=0 表示不限制，仅由 maxVisits 约束；>0 时与 maxVisits
+     *                        共同约束搜索，任一条件先满足即停止。
+     *                        native 侧 katago_jni.cpp 会把该值写入 SearchParams.maxTime。
+     */
+    public synchronized AnalysisResult analyze(int[][] boardState, int boardSize, int maxVisits,
+                                                 int nextPlayer, double komi, int numThreads,
+                                                 boolean includePolicy, boolean tsumeMode,
+                                                 double maxTimeSeconds)
+            throws IOException, JSONException {
 
         if (!initialized) throw new IOException("引擎尚未初始化，请先调用 prepare()");
 
@@ -186,6 +204,11 @@ public class KataGoEngine {
         req.put("maxVisits", maxVisits);
         req.put("numThreads", numThreads);
         req.put("komi", komi);
+        // 时间尺度（秒）：与访问次数共同约束搜索，任一先到即停。
+        // native 端 katago_jni.cpp 已支持解析 maxTime 并写入 SearchParams.maxTime。
+        if (maxTimeSeconds > 0) {
+            req.put("maxTime", maxTimeSeconds);
+        }
         req.put("includePolicy", includePolicy);
         req.put("includeOwnership", false);
         req.put("initialPlayer", nextPlayer == GoBoard.WHITE ? "W" : "B");
@@ -272,7 +295,7 @@ public class KataGoEngine {
         return result;
     }
 
-    public void closeEngine() {
+    public synchronized void closeEngine() {
         try {
             close();
         } catch (Exception ignored) {
