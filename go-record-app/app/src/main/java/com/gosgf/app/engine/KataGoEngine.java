@@ -96,6 +96,13 @@ public class KataGoEngine {
     private int idCounter = 0;
 
     /**
+     * native 侧 initialize/analyzePosition/close 均为 static native，操作的是同一份进程级
+     * 引擎状态。原先在实例方法上加 synchronized 锁的是 this，无法覆盖 static native；
+     * 统一改为锁该类级对象，保证跨实例/跨线程对 native 的访问严格串行。
+     */
+    private static final Object NATIVE_LOCK = new Object();
+
+    /**
      * 准备引擎。
      * 模型权重由调用方从任意目录提供（modelPath，应用私有目录内的副本），
      * 不再内置在 APK assets 中；配置文件(cfg)仍从 assets 解压到应用私有目录。
@@ -103,7 +110,26 @@ public class KataGoEngine {
      * @param modelPath 用户选定的模型文件绝对路径
      * @return 错误信息；null 表示准备就绪。
      */
-    public synchronized String prepare(Context context, String modelPath) {
+    public String prepare(Context context, String modelPath) {
+        synchronized (NATIVE_LOCK) {
+            return prepareLocked(context, modelPath);
+        }
+    }
+
+    /**
+     * 原子版准备：仅当尚未初始化时执行 prepare，避免分析线程与 AI 线程同时进入
+     * {@code if (!enginePrepared) ...} 后各自调用 initialize()（check-then-act 竞态）。
+     * @return 错误信息；null 表示引擎已就绪（本次新建或此前已初始化）。
+     */
+    public String ensurePrepared(Context context, String modelPath) {
+        synchronized (NATIVE_LOCK) {
+            if (initialized) return null;
+            return prepareLocked(context, modelPath);
+        }
+    }
+
+    /** 调用方须持有 NATIVE_LOCK。 */
+    private String prepareLocked(Context context, String modelPath) {
         String loadErr = ensureLibLoaded();
         if (loadErr != null) return loadErr;
         if (modelPath == null || modelPath.isEmpty()) {
@@ -148,8 +174,8 @@ public class KataGoEngine {
      * @param nextPlayer 当前行棋方（GoBoard.BLACK / GoBoard.WHITE）
      * @return 分析结果
      */
-    public synchronized AnalysisResult analyze(int[][] boardState, int boardSize, int maxVisits,
-                                                 int nextPlayer, double komi, int numThreads)
+    public AnalysisResult analyze(int[][] boardState, int boardSize, int maxVisits,
+                                  int nextPlayer, double komi, int numThreads)
             throws IOException, JSONException {
         return analyze(boardState, boardSize, maxVisits, nextPlayer, komi, numThreads, true, false);
     }
@@ -158,9 +184,9 @@ public class KataGoEngine {
      * 分析当前局面。
      * @param includePolicy 是否请求策略输出。估算场景关闭可显著减少引擎计算量（秒出）。
      */
-    public synchronized AnalysisResult analyze(int[][] boardState, int boardSize, int maxVisits,
-                                                 int nextPlayer, double komi, int numThreads,
-                                                 boolean includePolicy)
+    public AnalysisResult analyze(int[][] boardState, int boardSize, int maxVisits,
+                                  int nextPlayer, double komi, int numThreads,
+                                  boolean includePolicy)
             throws IOException, JSONException {
         return analyze(boardState, boardSize, maxVisits, nextPlayer, komi, numThreads, includePolicy, false);
     }
@@ -171,9 +197,9 @@ public class KataGoEngine {
      * @param tsumeMode 死活模式: true → dynamicPlayoutDoublingAdvantageCapPerOppLead = 0.0,
      *                  不随优势降低搜索量, 死活/官子算得更清。false → 普通对局默认。
      */
-    public synchronized AnalysisResult analyze(int[][] boardState, int boardSize, int maxVisits,
-                                                 int nextPlayer, double komi, int numThreads,
-                                                 boolean includePolicy, boolean tsumeMode)
+    public AnalysisResult analyze(int[][] boardState, int boardSize, int maxVisits,
+                                  int nextPlayer, double komi, int numThreads,
+                                  boolean includePolicy, boolean tsumeMode)
             throws IOException, JSONException {
         // 旧调用链：不限制时间，仅由 maxVisits 约束
         return analyze(boardState, boardSize, maxVisits, nextPlayer, komi, numThreads,
@@ -188,10 +214,22 @@ public class KataGoEngine {
      *                        共同约束搜索，任一条件先满足即停止。
      *                        native 侧 katago_jni.cpp 会把该值写入 SearchParams.maxTime。
      */
-    public synchronized AnalysisResult analyze(int[][] boardState, int boardSize, int maxVisits,
-                                                 int nextPlayer, double komi, int numThreads,
-                                                 boolean includePolicy, boolean tsumeMode,
-                                                 double maxTimeSeconds)
+    public AnalysisResult analyze(int[][] boardState, int boardSize, int maxVisits,
+                                  int nextPlayer, double komi, int numThreads,
+                                  boolean includePolicy, boolean tsumeMode,
+                                  double maxTimeSeconds)
+            throws IOException, JSONException {
+        synchronized (NATIVE_LOCK) {
+            return analyzeLocked(boardState, boardSize, maxVisits, nextPlayer, komi,
+                    numThreads, includePolicy, tsumeMode, maxTimeSeconds);
+        }
+    }
+
+    /** 调用方须持有 NATIVE_LOCK。 */
+    private AnalysisResult analyzeLocked(int[][] boardState, int boardSize, int maxVisits,
+                                         int nextPlayer, double komi, int numThreads,
+                                         boolean includePolicy, boolean tsumeMode,
+                                         double maxTimeSeconds)
             throws IOException, JSONException {
 
         if (!initialized) throw new IOException("引擎尚未初始化，请先调用 prepare()");
@@ -295,12 +333,14 @@ public class KataGoEngine {
         return result;
     }
 
-    public synchronized void closeEngine() {
-        try {
-            close();
-        } catch (Exception ignored) {
+    public void closeEngine() {
+        synchronized (NATIVE_LOCK) {
+            try {
+                close();
+            } catch (Exception ignored) {
+            }
+            initialized = false;
         }
-        initialized = false;
     }
 
     // ==================== assets 解压 ====================

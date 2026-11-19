@@ -52,6 +52,7 @@ import java.io.OutputStreamWriter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicInteger;
 
     public class MainActivity extends AppCompatActivity {
     private GoBoard board;
@@ -101,6 +102,7 @@ import java.util.Locale;
     private KataGoEngine katagoEngine;
     private boolean enginePrepared = false;
     private Thread analysisThread = null; // 当前分析后台线程，用于生命周期安全回收
+    private final AtomicInteger analysisEngineToken = new AtomicInteger(0); // 当前分析持有的引擎令牌
 
     // 估算：后台低算力校正用（与实时分析共用引擎，引擎忙则跳过校正）
     private int estimateToken = 0; // 每次估算+1，取代旧校正结果
@@ -116,7 +118,13 @@ import java.util.Locale;
     private boolean liveAnalysis = false;
     // 全自动分析：每步落子/导航后立即自动分析（无需点击分析按钮）
     private boolean autoAnalyze = false;
-    private volatile boolean engineBusy = false; // 主线程/分析线程/AI线程共享，volatile 保证可见性
+    // 引擎独占令牌（owner token）：0 表示空闲，非 0 表示持有者任务 id。
+    // 取代原先裸的 boolean engineBusy：旧任务作废后其 finally 不得清掉新任务刚置位的忙标志，
+    // 否则会出现「AI/分析任务正占用引擎，标志却被旧任务清成 false」导致并发访问 native 的竞态。
+    // 只有当前 owner（token 匹配）才能释放；所有读写均可跨线程，故用 AtomicInteger。
+    private final AtomicInteger engineOwner = new AtomicInteger(0);
+    private final AtomicInteger engineTokenSeq = new AtomicInteger(0);
+    private volatile boolean engineBusy = false; // UI/估算侧的快速只读镜像，由 acquire/release 同步维护
     private int analysisToken = 0; // 每次分析+1，棋盘变化时取消旧分析使其结果作废
     private ValueAnimator liveBtnAnim;
     private Runnable liveTextRunnable;
@@ -381,9 +389,12 @@ import java.util.Locale;
             Log_e("已复制模型到内部: " + dest.getAbsolutePath(), null);
             // 直接在原 Toast 上显示真实文件名，确保用户立刻看到原名
             Toast.makeText(this, "已导入模型：" + dest.getName(), Toast.LENGTH_SHORT).show();
-            // 模型变更：先停止可能正在进行的分析并等待线程结束，避免 close 与
-            // analyze 并发访问同一 native 对象导致进程崩溃（native 崩溃 Java 层无法捕获）
+            // 模型变更：作废对战 AI 任务并停掉分析，回收引擎独占权后再 close 重建。
+            // KataGoEngine 内部已用 NATIVE_LOCK 保证 close 不与 analyze 并发崩溃。
+            vsToken++;
+            aiThinking = false;
             stopAnalysisAndWait();
+            clearEngineOwner();
             if (katagoEngine != null) katagoEngine.closeEngine();
             katagoEngine = null;
             enginePrepared = false;
@@ -739,13 +750,14 @@ import java.util.Locale;
         }
         if (board == null || board.getGameTree() == null) return;
 
-        engineBusy = true;
+        final int engineToken = acquireEngine(); // 独占引擎；失败则放弃本次分析
+        if (engineToken == 0) return;
+        analysisEngineToken.set(engineToken);
         startLiveAnim();
         final int myToken = ++analysisToken; // 本次分析令牌，用于棋盘变化时丢弃旧结果
 
         analysisThread = new Thread(() -> {
             List<AnalysisMark> marks = null;
-            boolean activityFinishing = isFinishing();
             try {
                 if (katagoEngine == null) katagoEngine = new KataGoEngine();
                 if (!enginePrepared) {
@@ -762,8 +774,9 @@ import java.util.Locale;
                     enginePrepared = true;
                 }
 
-                // 取当前真实棋盘状态发给引擎（不挖死子：死活完全由 KataGo 判定，全自动）。
-                int[][] boardState = board.getBoard();
+                // 取当前真实棋盘状态的快照发给引擎（不挖死子：死活完全由 KataGo 判定，全自动）。
+                // 用深拷贝避免后台分析期间主线程落子造成的数据竞争。
+                int[][] boardState = board.getBoardSnapshot();
                 int boardSize = boardState.length; // 棋盘边长（通常 19）
                 int who = board.getCurrentPlayer();
 
@@ -800,8 +813,10 @@ import java.util.Locale;
             } catch (Exception e) {
                 Log_e("KataGo分析异常", e);
             } finally {
-                engineBusy = false;
-                activityFinishing = isFinishing();
+                // 仅当自己仍是 owner 才释放：若期间被人机对战抢占了引擎，
+                // 本作废任务的 release 不得把 AI 任务的忙标志清成 false。
+                releaseEngine(engineToken);
+                analysisEngineToken.compareAndSet(engineToken, 0);
                 // 后台进程结束，无条件停止动画（不显示"分析中"）
                 stopLiveAnim();
                 // 若期间棋盘已变化（令牌不一致），丢弃旧局面的结果，保持提示消失
@@ -816,23 +831,21 @@ import java.util.Locale;
                         moveCountText.setText("步数: " + cur + " " + pl + buildAnalysisSuffix());
                     });
                 }
-                // 若 Activity 正在销毁，等分析线程结束后关闭 native 引擎，
-                // 避免 Activity 已销毁但 native 仍在跑 / close 与 analyze 并发导致进程崩溃
-                if (activityFinishing && katagoEngine != null) {
-                    katagoEngine.closeEngine();
-                    katagoEngine = null;
-                    enginePrepared = false;
-                }
                 if (Thread.currentThread() == analysisThread) analysisThread = null;
             }
         });
         analysisThread.start();
     }
 
-    /** 等待后台分析线程自然结束（最多 3s），避免与 closeEngine 并发。不改 liveAnalysis 开关本身。 */
+    /**
+     * 等待后台分析线程结束（最多 3s）并精确释放其引擎令牌。
+     * 只释放「分析任务自己」持有的 token：若期间引擎已被人机对战任务接管，
+     * 分析 token 已失配，releaseEngine 不会误清 AI 任务的忙标志。
+     * 不改 liveAnalysis 开关本身。
+     */
     private void stopAnalysisAndWait() {
         Thread t = analysisThread;
-        if (t != null && t.isAlive()) {
+        if (t != null && t.isAlive() && t != Thread.currentThread()) {
             try {
                 t.join(3000);
             } catch (InterruptedException ignored) {
@@ -840,11 +853,54 @@ import java.util.Locale;
             }
         }
         analysisThread = null;
-        engineBusy = false;
+        int tok = analysisEngineToken.getAndSet(0);
+        releaseEngine(tok);
     }
 
     private void Log_e(String msg, Exception e) {
         android.util.Log.e("MainActivity", msg, e);
+    }
+
+    /** 安全取错误消息：null 时用占位文案，避免 Toast 显示字面量 "null"。 */
+    private String safeError(Throwable t) {
+        if (t == null) return getString(R.string.vs_error_unknown);
+        String m = t.getMessage();
+        return (m == null || m.isEmpty()) ? getString(R.string.vs_error_unknown) : m;
+    }
+
+    // ==================== 引擎独占令牌（跨线程） ====================
+    /** 尝试独占引擎；返回非零 token 表示获取成功，0 表示已被其它任务占用。 */
+    private int acquireEngine() {
+        int token = engineTokenSeq.incrementAndGet();
+        if (engineOwner.compareAndSet(0, token)) {
+            engineBusy = true;
+            return token;
+        }
+        return 0;
+    }
+
+    /**
+     * 强制夺取引擎独占权（用于人机对战抢占分析引擎）。返回新 token。
+     * 夺取后旧 owner 的 release 会因 token 不匹配而失效，不会误清 busy 标志。
+     */
+    private int forceAcquireEngine() {
+        int token = engineTokenSeq.incrementAndGet();
+        engineOwner.set(token);
+        engineBusy = true;
+        return token;
+    }
+
+    /** 仅当自己仍是 owner 时释放；作废任务的 release 无效。 */
+    private void releaseEngine(int token) {
+        if (token != 0 && engineOwner.compareAndSet(token, 0)) {
+            engineBusy = false;
+        }
+    }
+
+    /** 无条件清空占用（仅生命周期收尾调用，如 onDestroy / 切换模型）。 */
+    private void clearEngineOwner() {
+        engineOwner.set(0);
+        engineBusy = false;
     }
 
     private void onBoardTouch(int x, int y) {
@@ -1783,8 +1839,8 @@ import java.util.Locale;
         boardView.setTerritoryMode(false);
         boardView.refresh();
 
-        String me = humanColor == GoBoard.BLACK ? "黑" : "白";
-        String ai = aiColor == GoBoard.BLACK ? "黑" : "白";
+        String me = getString(humanColor == GoBoard.BLACK ? R.string.vs_color_black : R.string.vs_color_white);
+        String ai = getString(aiColor == GoBoard.BLACK ? R.string.vs_color_black : R.string.vs_color_white);
         updateCommentDisplay();
         Toast.makeText(this, getString(R.string.vs_started, me, ai), Toast.LENGTH_SHORT).show();
         updateVsStatus();
@@ -1821,9 +1877,9 @@ import java.util.Locale;
         if (aiThinking) {
             tvVsStatus.setText(R.string.vs_thinking);
         } else {
-            String me = humanColor == GoBoard.BLACK ? "黑" : "白";
-            String ai = aiColor == GoBoard.BLACK ? "黑" : "白";
-            tvVsStatus.setText("你执" + me + " · AI执" + ai + " · " + getString(R.string.vs_your_turn));
+            String me = getString(humanColor == GoBoard.BLACK ? R.string.vs_color_black : R.string.vs_color_white);
+            String ai = getString(aiColor == GoBoard.BLACK ? R.string.vs_color_black : R.string.vs_color_white);
+            tvVsStatus.setText(getString(R.string.vs_status_turn, me, ai, getString(R.string.vs_your_turn)));
         }
     }
 
@@ -1833,8 +1889,10 @@ import java.util.Locale;
         if (board.getCurrentPlayer() != aiColor) return;
 
         final int myToken = ++vsToken;
+        // 抢占引擎独占权：夺取后旧分析/旧 AI 任务的 release 均失效，
+        // 避免过期任务把本任务的忙标志清掉（P0 竞态根因）。
+        final int engineToken = forceAcquireEngine();
         aiThinking = true;
-        engineBusy = true;   // 与实时分析共用「引擎忙」标志，避免并发
         updateVsStatus();
 
         aiMoveThread = new Thread(() -> {
@@ -1849,23 +1907,22 @@ import java.util.Locale;
                 if (myToken != vsToken || !vsMode) return;
 
                 if (katagoEngine == null) katagoEngine = new KataGoEngine();
-                if (!enginePrepared) {
-                    String modelPath = katagoPrefs.getString(PREF_MODEL_PATH, "");
-                    String err = katagoEngine.prepare(MainActivity.this, modelPath);
-                    if (err != null) {
-                        final String finalErr = err;
-                        runOnUiThread(() -> {
-                            Toast.makeText(MainActivity.this,
-                                    getString(R.string.vs_engine_unavailable) + "\n" + finalErr,
-                                    Toast.LENGTH_LONG).show();
-                            exitVsMode(false);
-                        });
-                        return;
-                    }
-                    enginePrepared = true;
+                String modelPath = katagoPrefs.getString(PREF_MODEL_PATH, "");
+                // 原子 check-then-prepare：与分析线程并发时也不会重复 initialize()
+                String err = katagoEngine.ensurePrepared(MainActivity.this, modelPath);
+                if (err != null) {
+                    final String finalErr = err;
+                    runOnUiThread(() -> {
+                        Toast.makeText(MainActivity.this,
+                                getString(R.string.vs_engine_unavailable) + "\n" + finalErr,
+                                Toast.LENGTH_LONG).show();
+                        exitVsMode(false);
+                    });
+                    return;
                 }
+                enginePrepared = true;
 
-                int[][] boardState = board.getBoard();
+                int[][] boardState = board.getBoardSnapshot();
                 int boardSize = boardState.length;
                 int who = board.getCurrentPlayer();
                 int strengthIdx = katagoPrefs.getInt(PREF_MAX_VISITS, 1);
@@ -1912,7 +1969,9 @@ import java.util.Locale;
                     updateCommentDisplay();
                     if (!ok) {
                         Toast.makeText(MainActivity.this,
-                                getString(R.string.vs_ai_failed, String.valueOf(board.getLastErrorMessage())),
+                                getString(R.string.vs_ai_failed,
+                                        board.getLastErrorMessage() == null || board.getLastErrorMessage().isEmpty()
+                                                ? getString(R.string.vs_error_unknown) : board.getLastErrorMessage()),
                                 Toast.LENGTH_SHORT).show();
                         exitVsMode(false);
                         return;
@@ -1925,19 +1984,25 @@ import java.util.Locale;
                 runOnUiThread(() -> {
                     if (myToken == vsToken && vsMode) {
                         Toast.makeText(MainActivity.this,
-                                getString(R.string.vs_ai_failed, String.valueOf(e.getMessage())),
+                                getString(R.string.vs_ai_failed, safeError(e)),
                                 Toast.LENGTH_SHORT).show();
                     }
                 });
             } finally {
-                aiThinking = false;
-                engineBusy = false;
-                if (Thread.currentThread() == aiMoveThread) aiMoveThread = null;
-                // 后台线程先释放引擎占用（volatile 写），再 post 到主线程触发分析，
-                // 保证 runAnalysis 读到的 engineBusy 已是 false，不会被误丢弃。
+                // 仅当前 owner 能释放引擎；作废任务的释放无效，不会清掉新任务的忙标志。
+                releaseEngine(engineToken);
+                // 只有自己仍是当前 AI 任务时才复位思考状态与线程引用，
+                // 避免过期任务把新任务正在进行的 aiThinking 清成 false 导致用户重复落子。
+                final boolean stillCurrent = (myToken == vsToken);
+                if (stillCurrent) {
+                    aiThinking = false;
+                    if (Thread.currentThread() == aiMoveThread) aiMoveThread = null;
+                }
+                // 后台线程已释放引擎占用，再 post 到主线程触发分析；runAnalysis 内部会
+                // 再次检查 engineBusy 与令牌，故此处不会与新任务并发。
                 runOnUiThread(() -> {
                     updateVsStatus();
-                    if (vsMode && !isFinishing() && liveAnalysis) {
+                    if (stillCurrent && vsMode && !isFinishing() && liveAnalysis) {
                         // AI 已应手，当前轮到用户：此时引擎空闲，分析新局面并绘制候选点/胜率
                         runAnalysis();
                     }
@@ -2197,7 +2262,7 @@ import java.util.Locale;
     private void runEstimateRefresh(final double komi, final boolean blackToMove) {
         if (katagoEngine == null || !enginePrepared) return;
         final int token = ++estimateToken;
-        final int[][] snapshot = board.getBoard();
+        final int[][] snapshot = board.getBoardSnapshot();
         final int boardSize = snapshot.length;
         final int nextPlayer = blackToMove ? GoBoard.BLACK : GoBoard.WHITE;
         final int threads = katagoPrefs.getInt(PREF_THREADS, 4);
@@ -2419,24 +2484,19 @@ import java.util.Locale;
         super.onDestroy();
         // 保存棋局状态
         saveGameStateToPreferences();
-        // 作废并等待进行中的 AI 落子任务，避免其回写已销毁的界面
+        // 作废所有进行中的分析 / AI 任务：令牌失配后，其回调中的 token 校验会拦截 UI 回写，
+        // 因此无需在 UI 线程 join 等待。此前 join(3s) + closeEngine() 在 maxTime 最长 30s
+        // 的场景下会阻塞 UI 线程等待 native 锁，造成 ANR。
         vsToken++;
+        analysisToken++;
         aiThinking = false;
-        Thread ai = aiMoveThread;
-        if (ai != null && ai.isAlive()) {
-            try { ai.join(3000); } catch (InterruptedException ignored) {
-                Thread.currentThread().interrupt();
-            }
-        }
         aiMoveThread = null;
-        // 停止分析线程并在退出前关闭 native 引擎，避免 Activity 销毁后 native 仍在跑
-        // 或 close 与分析并发导致进程崩溃
+        stopLiveAnim();
+        clearEngineOwner();
+        // native 引擎是进程级单例（static native），且 KataGoEngine 已用 NATIVE_LOCK 保证
+        // 与 analyze 严格串行、不会并发崩溃。此处不再 close：屏幕旋转重建 Activity 时
+        // 关闭会误伤新实例正在使用的引擎；让引擎随进程存活，避免重复加载模型的开销。
         stopAnalysisAndWait();
-        if (katagoEngine != null) {
-            katagoEngine.closeEngine();
-            katagoEngine = null;
-        }
-        enginePrepared = false;
         // 取消可能仍在排队的估算校正，避免 Activity 销毁后刷新已释放的弹窗
         scoreEstimateHandler.removeCallbacksAndMessages(null);
         estimateToken = -1;

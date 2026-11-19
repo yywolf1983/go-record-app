@@ -496,6 +496,8 @@ public class GoBoard {
     // ==================== Getters ====================
 
     public int[][] getBoard() { return board; }
+    /** 返回棋盘深拷贝快照，供后台线程安全分析使用，避免与主线程落子产生数据竞争。 */
+    public int[][] getBoardSnapshot() { return BoardLogic.copyBoard(board); }
     public int getCurrentPlayer() { return currentPlayer; }
     public List<Move> getMoveHistory() { return moveHistory; }
     public Move getLastMove() { return lastMove; }

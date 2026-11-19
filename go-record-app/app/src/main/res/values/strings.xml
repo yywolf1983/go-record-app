@@ -105,4 +105,8 @@
     <string name="vs_settings_enable">开启人机对战（随时可开关）</string>
     <string name="vs_settings_color">我的执子（对战中可随时改选，棋局不重置）</string>
     <string name="vs_settings_hint">从当前局面接着与 AI 对弈，随时可在此开关或改选执子（需空盘请先点「新局」）；仅开启「自动分析」后，AI 应手才会自动分析并给出候选点与胜率。</string>
+    <string name="vs_color_black">黑</string>
+    <string name="vs_color_white">白</string>
+    <string name="vs_status_turn">你执%1$s · AI执%2$s · %3$s</string>
+    <string name="vs_error_unknown">未知错误</string>
 </resources>
